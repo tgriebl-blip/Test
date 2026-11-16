@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mini-CAD</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --ui-bg: #f3f4f6; --ui-fg: #1c2024; --ui-border: #c9ced6; --ui-btn: #ffffff; --ui-active: #1c64d8; --ui-muted: #5f6772;
+    --cv-bg: #ffffff; --cv-grid: #eff1f4; --cv-grid2: #dadee4; --cv-axis: #aab1bb;
+    --cv-line: #14171a; --cv-dim: #0b7a43; --cv-sel: #d6336c; --cv-snap: #e8590c; --cv-prev: #1c64d8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ui-bg: #23272e; --ui-fg: #e6e9ee; --ui-border: #3c424c; --ui-btn: #2e333c; --ui-active: #2f7df6; --ui-muted: #9aa3af;
+      --cv-bg: #15181c; --cv-grid: #1d2126; --cv-grid2: #2a2f37; --cv-axis: #4b535f;
+      --cv-line: #f2f4f7; --cv-dim: #5fd39a; --cv-sel: #ff6b9d; --cv-snap: #ffa94d; --cv-prev: #6aa9ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
+         font: 13px/1.35 system-ui, sans-serif; background: var(--ui-bg); color: var(--ui-fg); }
+  #bar, #status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 6px 8px; }
+  #bar { border-bottom: 1px solid var(--ui-border); }
+  #status { border-top: 1px solid var(--ui-border); }
+  .grp { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .grp label { display: flex; align-items: center; gap: 3px; margin-left: 4px; white-space: nowrap; }
+  button, select, input[type=number], #cmd {
+    font: inherit; color: inherit; background: var(--ui-btn);
+    border: 1px solid var(--ui-border); border-radius: 4px; padding: 4px 9px;
+  }
+  button { cursor: pointer; }
+  button.on { background: var(--ui-active); border-color: var(--ui-active); color: #fff; }
+  select { padding: 4px 2px; }
+  #oGridStep { width: 62px; padding: 4px 4px 4px 6px; }
+  #wrap { flex: 1; position: relative; min-height: 0; }
+  #cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+  #prompt { flex: 1 1 320px; white-space: pre-wrap; }
+  #cmd { width: 120px; }
+  #coords { color: var(--ui-muted); white-space: pre; font-variant-numeric: tabular-nums; }
+  #help { position: absolute; top: 8px; right: 8px; width: min(440px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow: auto;
+          background: var(--ui-bg); border: 1px solid var(--ui-border); border-radius: 6px; padding: 4px 14px 10px; }
+  #help h3 { margin: 10px 0 2px; font-size: 13px; }
+  #help p { margin: 0 0 4px; }
+  #help code { background: var(--ui-btn); border: 1px solid var(--ui-border); border-radius: 3px; padding: 0 3px; }
+  #printimg { display: none; }
+  @media print {
+    @page { margin: 10mm; }
+    body { display: block; height: auto; background: #fff; }
+    #bar, #wrap, #status { display: none !important; }
+    #printimg { display: block; max-width: 100%; max-height: 95vh; margin: 0 auto; }
+  }
+</style>
+</head>
+<body>
+
+<div id="bar">
+  <span class="grp">
+    <button data-tool="select" title="Auswahl (A)">Auswahl</button>
+    <button data-tool="line" title="Linie (L)">Linie</button>
+    <button data-tool="rect" title="Rechteck (R)">Rechteck</button>
+    <button data-tool="dim" title="Bemaßung (B)">Bemaßung</button>
+  </span>
+  <span class="grp">
+    <button id="undo" title="Rückgängig (Strg+Z)">↶</button>
+    <button id="redo" title="Wiederholen (Strg+Y)">↷</button>
+    <button id="del" title="Auswahl löschen (Entf)">Löschen</button>
+    <button id="fit" title="Ganze Zeichnung zeigen">Alles zeigen</button>
+  </span>
+  <span class="grp">
+    <label title="Linien rasten auf feste Winkel ein (F8)"><input type="checkbox" id="oAng"> Winkelfang</label>
+    <select id="oStep" title="Winkelschritt"><option value="15">15°</option><option value="30">30°</option><option value="45">45°</option><option value="90">90°</option></select>
+    <label title="End-, Mittel- und Schnittpunkte fangen (F3)"><input type="checkbox" id="oSnap"> Objektfang</label>
+    <label title="Punkte rasten auf ein Raster ein (F9)"><input type="checkbox" id="oGrid"> Rasterfang</label>
+    <input type="number" id="oGridStep" min="0.001" step="any" title="Rasterweite in mm"> mm
+  </span>
+  <span class="grp">
+    <button id="new" title="Zeichnung leeren">Neu</button>
+    <button id="open" title="Gespeicherte Zeichnung (.json) öffnen">Öffnen</button>
+    <button id="save" title="Zeichnung als Datei speichern (Strg+S)">Speichern</button>
+    <button id="png" title="Als Bild exportieren">PNG</button>
+    <button id="dxf" title="Für AutoCAD &amp; Co. exportieren">DXF</button>
+    <button id="print">Drucken</button>
+    <button id="helpBtn" title="Kurzanleitung">?</button>
+  </span>
+</div>
+
+<div id="wrap">
+  <canvas id="cv"></canvas>
+  <div id="help" hidden>
+    <h3>Linie (L)</h3>
+    <p>Startpunkt anklicken, Maus grob in die gewünschte Richtung bewegen, <b>Länge in mm tippen</b> und Enter drücken.
+       Die Linie rastet auf 0°, 45°, 90° … ein. Danach einfach die nächste Länge tippen.
+       Esc, Enter oder Rechtsklick beendet den Linienzug, <code>C</code> schließt ihn.</p>
+    <p>Weitere Eingaben: <code>100&lt;30</code> Länge und Winkel · <code>@50;20</code> relativ (dx;dy) · <code>120;80</code> absolut (x;y).
+       Dezimalkomma oder -punkt geht beides.</p>
+    <h3>Rechteck (R)</h3>
+    <p>Erste Ecke anklicken, dann <code>Breite;Höhe</code> tippen + Enter – oder die zweite Ecke anklicken.</p>
+    <h3>Bemaßung (B)</h3>
+    <p>Zwei Punkte (oder direkt eine Linie) anklicken, dann die Lage der Maßlinie anklicken oder ihren Abstand tippen.
+       Bei schrägen Strecken: Maus ober-/unterhalb = horizontales Maß, seitlich = vertikales Maß, sonst ausgerichtet.</p>
+    <h3>Auswahl (A)</h3>
+    <p>Element anklicken (Umschalt = mehrere) oder Fenster aufziehen (nach links gezogen = auch Angeschnittenes). Entf löscht.</p>
+    <h3>Fang</h3>
+    <p>□ Endpunkt · △ Mittelpunkt · ✕ Schnittpunkt · gepunktete Linie = fluchtet mit einem Endpunkt.
+       F3 Objektfang, F8 Winkelfang, F9 Rasterfang.</p>
+    <h3>Ansicht</h3>
+    <p>Mausrad = Zoom · mittlere oder rechte Maustaste ziehen (oder Leertaste + ziehen) = verschieben · Strg+Z / Strg+Y = rückgängig / wiederholen.</p>
+  </div>
+</div>
+
+<div id="status">
+  <span id="prompt"></span>
+  <span class="grp">
+    <input id="cmd" autocomplete="off" spellcheck="false" placeholder="Länge / Wert" title="Wert eingeben und Enter drücken">
+    <button id="ok" title="Eingabe bestätigen bzw. Befehl beenden (Enter)">↵</button>
+  </span>
+  <span id="coords"></span>
+</div>
+
+<img id="printimg" alt="">
+<input type="file" id="file" accept=".json,application/json" hidden>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const cv = $('cv'), ctx = cv.getContext('2d'), cmd = $('cmd');
+
+// ---------- Zustand (alle Maße in mm, Y-Achse zeigt nach oben, Winkel gegen den Uhrzeigersinn) ----------
+let ents = [];        // {id,t:'line',x1,y1,x2,y2} oder {id,t:'dim',x1,y1,x2,y2,px,py,mode:'a'|'h'|'v'}
+let nextId = 1;
+const sel = new Set();
+let tool = 'line';
+let view = { s: 3, ox: 80, oy: 400 };            // Bildschirm = (ox + x*s, oy - y*s)
+const mouse = { x: 0, y: 0 };
+let cur = { x: 0, y: 0, snap: null };            // Zeigerposition nach dem Fang
+let chain = [];       // Linie: Punkte des laufenden Linienzugs
+let pts = [];         // Rechteck/Bemaßung: bereits gesetzte Punkte
+let lastDir = 0, drag = null, spaceDown = false, lastMid = 0, raf = 0, flashMsg = '', flashTimer = 0;
+let undoStack = [], redoStack = [];
+const opt = { ang: true, step: 45, osnap: true, grid: true, gridStep: 1 };
+const APERTURE = 10;                                              // Fangradius in Pixeln
+const DIM = { arrow: 9, gap: 3, over: 5, text: 12, textGap: 4 };  // Bemaßungsgrößen in Pixeln
+const KEY = 'minicad.v1';
+const C = {};                                                     // Farben der Zeichenfläche (aus dem CSS)
+
+// ---------- Hilfsfunktionen ----------
+const w2s = (x, y, v = view) => [v.ox + x * v.s, v.oy - y * v.s];
+const s2w = (sx, sy) => ({ x: (sx - view.ox) / view.s, y: (view.oy - sy) / view.s });
+const R = v => Math.round(v * 1e9) / 1e9;
+const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
+const same = (a, b) => Math.abs(a.x - b.x) < 1e-7 && Math.abs(a.y - b.y) < 1e-7;
+const angleDeg = (a, b) => (Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI + 360) % 360;
+const num = s => /^[+-]?(\d+([.,]\d*)?|[.,]\d+)$/.test(s = s.trim()) ? parseFloat(s.replace(',', '.')) : NaN;
+
+function fmt(n, d = 2) {
+  let s = n.toFixed(d);
+  if (s.includes('.')) s = s.replace(/\.?0+$/, '');
+  return (s === '-0' ? '0' : s).replace('.', ',');
+}
+function dirVec(deg) {                      // Einheitsvektor; für 45°-Schritte exakt
+  deg = ((deg % 360) + 360) % 360;
+  if (deg % 45 === 0) { const q = Math.SQRT1_2; return [[1, 0], [q, q], [0, 1], [-q, q], [-1, 0], [-q, -q], [0, -1], [q, -q]][deg / 45]; }
+  const r = deg * Math.PI / 180;
+  return [Math.cos(r), Math.sin(r)];
+}
+function distSeg(px, py, x1, y1, x2, y2) {   // Abstand Punkt – Strecke
+  const dx = x2 - x1, dy = y2 - y1, l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / l2)) : 0;
+  return Math.hypot(px - x1 - t * dx, py - y1 - t * dy);
+}
+function segInt(a, b) {                      // Schnittpunkt zweier Strecken oder null
+  const ax = a.x2 - a.x1, ay = a.y2 - a.y1, bx = b.x2 - b.x1, by = b.y2 - b.y1;
+  const den = ax * by - ay * bx;
+  if (Math.abs(den) <= 1e-10 * Math.hypot(ax, ay) * Math.hypot(bx, by)) return null;
+  const t = ((b.x1 - a.x1) * by - (b.y1 - a.y1) * bx) / den, u = ((b.x1 - a.x1) * ay - (b.y1 - a.y1) * ax) / den;
+  return t < -1e-9 || t > 1 + 1e-9 || u < -1e-9 || u > 1 + 1e-9 ? null : { x: a.x1 + t * ax, y: a.y1 + t * ay };
+}
+function gridUnit() {                        // Abstand der feinen Gitterlinien (Zehnerpotenz in mm)
+  let m = 1;
+  while (m * view.s < 8) m *= 10;
+  while (m * view.s >= 80) m /= 10;
+  return m;
+}
+function flash(msg) {
+  flashMsg = msg; clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { flashMsg = ''; status(); }, 3000);
+  status();
+}
+
+// ---------- Fang ----------
+function findSnap(w, skip) {                 // Objektfang: End-, Mittel- und Schnittpunkte nahe am Zeiger
+  const r = APERTURE / view.s, near = [];
+  let best = null;
+  const cand = (x, y, type, prio) => {
+    if (skip && Math.abs(x - skip.x) < 1e-7 && Math.abs(y - skip.y) < 1e-7) return;
+    const score = Math.hypot(x - w.x, y - w.y) + prio * r;
+    if (score - prio * r <= r && (!best || score < best.score)) best = { x, y, type, score };
+  };
+  for (const e of ents) {
+    if (e.t !== 'line' || distSeg(w.x, w.y, e.x1, e.y1, e.x2, e.y2) > r) continue;
+    near.push(e);
+    cand(e.x1, e.y1, 'end', 0); cand(e.x2, e.y2, 'end', 0);
+    cand((e.x1 + e.x2) / 2, (e.y1 + e.y2) / 2, 'mid', 0.2);
+  }
+  for (let i = 0; i < near.length; i++) for (let j = i + 1; j < near.length; j++) {
+    const p = segInt(near[i], near[j]);
+    if (p) cand(p.x, p.y, 'int', 0.1);
+  }
+  return best;
+}
+function curDir(base) {                      // Zeichenrichtung in Grad – abhängig von der Lage des Zeigers
+  const w = !opt.ang && cur.snap ? cur : s2w(mouse.x, mouse.y);
+  if (dist(base, w) * view.s < 1) return lastDir;
+  let d = angleDeg(base, w);
+  if (opt.ang) d = Math.round(d / opt.step) * opt.step;
+  return d % 360;
+}
+function resolve() {                         // Zeigerposition -> Zeichenpunkt (Objektfang > Winkelfang > Rasterfang)
+  const w = s2w(mouse.x, mouse.y), res = { x: w.x, y: w.y, snap: null };
+  if (tool === 'select') return res;
+  const base = tool === 'line' ? chain[chain.length - 1] : null;
+  const placing = tool === 'dim' && pts.length === 2;
+  const g = opt.grid && opt.gridStep > 0 ? opt.gridStep : 0;
+  const s = opt.osnap && !placing ? findSnap(w, base) : null;
+  if (s) { res.x = s.x; res.y = s.y; res.snap = s.type; }
+  else if (base && opt.ang) {                // auf dem Winkelstrahl bleiben
+    const deg = curDir(base), [dx, dy] = dirVec(deg), r = APERTURE / view.s;
+    let t = Math.max(0, (w.x - base.x) * dx + (w.y - base.y) * dy), best = null;
+    const cand = (tt, type, gx, gy) => {
+      const d = Math.abs(tt - t), hard = type !== 'track';
+      if (tt < 1e-7 || d > (hard ? r : r * 0.6)) return;
+      if (!best || (hard === best.hard ? d < best.d : hard)) best = { t: tt, type, gx, gy, d, hard };
+    };
+    if (opt.osnap) for (const e of ents) {
+      if (e.t !== 'line') continue;
+      const ex = e.x2 - e.x1, ey = e.y2 - e.y1, den = dx * ey - dy * ex;
+      if (Math.abs(den) > 1e-10 * Math.hypot(ex, ey)) {            // Strahl kreuzt vorhandene Linie
+        const tt = ((e.x1 - base.x) * ey - (e.y1 - base.y) * ex) / den, u = ((e.x1 - base.x) * dy - (e.y1 - base.y) * dx) / den;
+        if (u >= -1e-9 && u <= 1 + 1e-9) cand(tt, 'int');
+      }
+      for (const [px, py] of [[e.x1, e.y1], [e.x2, e.y2]]) {
+        if (Math.abs((px - base.x) * dy - (py - base.y) * dx) < 1e-7) { cand((px - base.x) * dx + (py - base.y) * dy, 'end'); continue; }
+        if (Math.abs(dx) > 1e-9) cand((px - base.x) / dx, 'track', px, py);   // fluchtet senkrecht mit Endpunkt
+        if (Math.abs(dy) > 1e-9) cand((py - base.y) / dy, 'track', px, py);   // fluchtet waagerecht mit Endpunkt
+      }
+    }
+    if (best) { t = best.t; res.snap = best.type; res.gx = best.gx; res.gy = best.gy; }
+    else if (g) t = deg % 90 !== 0 && deg % 45 === 0 ? Math.round(t * Math.SQRT1_2 / g) * g / Math.SQRT1_2 : Math.round(t / g) * g;
+    res.x = base.x + t * dx; res.y = base.y + t * dy;
+  }
+  else if (g) { res.x = Math.round(w.x / g) * g; res.y = Math.round(w.y / g) * g; }
+  return res;
+}
+
+// ---------- Eingabe von Werten ----------
+function typedPoint(s) {                     // getippten Text in einen Punkt umrechnen (oder null)
+  if (tool === 'select') return null;
+  const base = tool === 'line' ? chain[chain.length - 1] : pts[pts.length - 1];
+  const w = s2w(mouse.x, mouse.y), placing = tool === 'dim' && pts.length === 2;
+  const rel = s[0] === '@';
+  if (rel) s = s.slice(1);
+  if (s.includes(';')) {                     // x;y  bzw.  @dx;dy  bzw.  Breite;Höhe
+    const [a, b, more] = s.split(';').map(num);
+    if (isNaN(a) || isNaN(b) || more !== undefined || placing) return null;
+    if (tool === 'rect' && base && !rel) return { x: base.x + Math.abs(a) * (w.x < base.x ? -1 : 1), y: base.y + Math.abs(b) * (w.y < base.y ? -1 : 1) };
+    if (rel) return base ? { x: base.x + a, y: base.y + b } : null;
+    return { x: a, y: b };
+  }
+  if (rel || !base) return null;
+  if (s.includes('<')) {                     // Länge<Winkel
+    const [l, a, more] = s.split('<').map(num);
+    if (tool !== 'line' || isNaN(l) || isNaN(a) || more !== undefined || !l) return null;
+    const [dx, dy] = dirVec(a);
+    return { x: base.x + l * dx, y: base.y + l * dy };
+  }
+  const l = num(s);
+  if (isNaN(l) || !l) return null;
+  if (tool === 'line') { const [dx, dy] = dirVec(curDir(base)); return { x: base.x + l * dx, y: base.y + l * dy }; }
+  if (tool === 'rect') return { x: base.x + Math.abs(l) * (w.x < base.x ? -1 : 1), y: base.y + Math.abs(l) * (w.y < base.y ? -1 : 1) };
+  if (placing) {                             // Abstand der Maßlinie
+    const [a, b] = pts, mode = dimMode(a, b, w), d = Math.abs(l);
+    if (mode === 'h') return { mode, x: w.x, y: w.y >= (a.y + b.y) / 2 ? Math.max(a.y, b.y) + d : Math.min(a.y, b.y) - d };
+    if (mode === 'v') return { mode, y: w.y, x: w.x >= (a.x + b.x) / 2 ? Math.max(a.x, b.x) + d : Math.min(a.x, b.x) - d };
+    const L = dist(a, b), nx = -(b.y - a.y) / L, ny = (b.x - a.x) / L, side = (w.x - a.x) * nx + (w.y - a.y) * ny < 0 ? -1 : 1;
+    return { mode, x: a.x + nx * d * side, y: a.y + ny * d * side };
+  }
+  return null;
+}
+function target() {                          // der Punkt, der bei Klick/Enter gesetzt wird
+  const s = cmd.value.trim();
+  return (s && typedPoint(s)) || cur;
+}
+function applyTyped() {
+  const s = cmd.value.trim();
+  if (!s) return finish();
+  const p = typedPoint(s);
+  if (!p) return flash('Eingabe „' + s + '“ passt hier nicht.');
+  cmd.value = '';
+  pick(p, p.mode);
+  refresh();
+}
+
+// ---------- Zeichnen (Befehle) ----------
+const addLine = (a, b) => ents.push({ id: nextId++, t: 'line', x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+
+function dimMode(a, b, p) {                  // Art des Maßes je nach Lage des Zeigers
+  const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+  if (x1 - x0 < 1e-7 || y1 - y0 < 1e-7) return 'a';
+  const inX = p.x >= x0 && p.x <= x1, inY = p.y >= y0 && p.y <= y1;
+  return inX && !inY ? 'h' : inY && !inX ? 'v' : 'a';
+}
+function dimEnt(p, mode) {
+  const [a, b] = pts;
+  return { t: 'dim', x1: a.x, y1: a.y, x2: b.x, y2: b.y, px: p.x, py: p.y, mode: mode || dimMode(a, b, p) };
+}
+function pick(p, mode) {                     // einen Punkt an den aktiven Befehl übergeben
+  p = { x: R(p.x), y: R(p.y) };
+  if (tool === 'line') {
+    const a = chain[chain.length - 1];
+    if (!a) { chain = [p]; return; }
+    if (same(a, p)) return;
+    change(() => addLine(a, p));
+    lastDir = angleDeg(a, p);
+    if (chain.length > 2 && same(p, chain[0])) chain = [];   // geschlossen -> Linienzug beenden
+    else chain.push(p);
+  } else if (tool === 'rect') {
+    const a = pts[0];
+    if (!a) { pts = [p]; return; }
+    if (Math.abs(a.x - p.x) < 1e-7 || Math.abs(a.y - p.y) < 1e-7) return;
+    const b = { x: p.x, y: a.y }, d = { x: a.x, y: p.y };
+    change(() => { addLine(a, b); addLine(b, p); addLine(p, d); addLine(d, a); });
+    pts = [];
+  } else if (tool === 'dim') {
+    if (pts.length < 2) { if (!pts.length || !same(pts[0], p)) pts.push(p); return; }
+    const e = dimEnt(p, mode);
+    change(() => ents.push({ id: nextId++, ...e }));
+    pts = [];
+  }
+}
+function click() {
+  cur = resolve();
+  if (tool === 'dim' && !pts.length && !cur.snap) {          // Linie direkt anklicken = beide Endpunkte
+    const e = hit(mouse.x, mouse.y, 'line');
+    if (e) { pts = [{ x: e.x1, y: e.y1 }, { x: e.x2, y: e.y2 }]; return; }
+  }
+  const p = target();
+  cmd.value = '';
+  pick(p, p.mode);
+}
+function finish() { chain = []; pts = []; refresh(); }      // Enter / Rechtsklick
+function escape() {
+  if (cmd.value) cmd.value = '';
+  else if (chain.length || pts.length) { chain = []; pts = []; }
+  else if (sel.size) sel.clear();
+  else if (!$('help').hidden) $('help').hidden = true;
+  else return setTool('select');
+  refresh();
+}
+function setTool(t) {
+  tool = t; chain = []; pts = []; cmd.value = '';
+  if (t !== 'select') sel.clear();
+  document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+  refresh();
+}
+
+// ---------- Änderungen, Rückgängig, Speichern ----------
+function setEnts(list) { ents = list; nextId = ents.reduce((m, e) => Math.max(m, e.id), 0) + 1; sel.clear(); }
+function save() { try { localStorage.setItem(KEY, JSON.stringify({ ents, opt })); } catch (e) { /* kein Speicher verfügbar */ } }
+function change(fn) {
+  undoStack.push(JSON.stringify(ents));
+  if (undoStack.length > 300) undoStack.shift();
+  redoStack = [];
+  fn(); save();
+}
+function undo() {
+  if (tool === 'line' && chain.length === 1) chain = [];     // nur den Startpunkt zurücknehmen
+  else if (undoStack.length) {
+    redoStack.push(JSON.stringify(ents));
+    setEnts(JSON.parse(undoStack.pop()));
+    chain.pop(); pts = []; save();
+  }
+  refresh();
+}
+function redo() {
+  if (!redoStack.length) return;
+  undoStack.push(JSON.stringify(ents));
+  setEnts(JSON.parse(redoStack.pop()));
+  chain = []; pts = []; save(); refresh();
+}
+function delSel() {
+  if (!sel.size) return;
+  change(() => { ents = ents.filter(e => !sel.has(e.id)); });
+  sel.clear(); refresh();
+}
+function clean(list) {                       // geladene Daten prüfen
+  const ok = v => typeof v === 'number' && isFinite(v);
+  return (Array.isArray(list) ? list : [])
+    .filter(e => e && (e.t === 'line' || e.t === 'dim') && [e.x1, e.y1, e.x2, e.y2].every(ok) && (e.t === 'line' || (ok(e.px) && ok(e.py))))
+    .map((e, i) => e.t === 'line'
+      ? { id: i + 1, t: 'line', x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2 }
+      : { id: i + 1, t: 'dim', x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2, px: e.px, py: e.py, mode: e.mode === 'h' || e.mode === 'v' ? e.mode : 'a' });
+}
+
+// ---------- Auswahl ----------
+function hit(sx, sy, only) {                 // Element unter dem Zeiger
+  const w = s2w(sx, sy), k = 1 / view.s;
+  let best = null, bd = 6 * k;
+  for (const e of ents) {
+    if (only && e.t !== only) continue;
+    let d;
+    if (e.t === 'line') d = distSeg(w.x, w.y, e.x1, e.y1, e.x2, e.y2);
+    else {
+      const g = dimGeom(e, k);
+      d = Math.max(0, Math.hypot(w.x - g.tx, w.y - g.ty) - 8 * k);
+      for (const l of g.lines) d = Math.min(d, distSeg(w.x, w.y, ...l));
+    }
+    if (d <= bd) { bd = d; best = e; }
+  }
+  return best;
+}
+function endBox() {
+  const { x0, y0, add } = drag, x1 = mouse.x, y1 = mouse.y;
+  if (!add) sel.clear();
+  if (Math.abs(x1 - x0) < 4 && Math.abs(y1 - y0) < 4) {      // einfacher Klick
+    const e = hit(x1, y1);
+    if (e) { if (add && sel.has(e.id)) sel.delete(e.id); else sel.add(e.id); }
+    return;
+  }
+  const a = s2w(Math.min(x0, x1), Math.max(y0, y1)), b = s2w(Math.max(x0, x1), Math.min(y0, y1));
+  const inside = (x, y) => x >= a.x && x <= b.x && y >= a.y && y <= b.y, crossing = x1 < x0;
+  const edges = [[a.x, a.y, b.x, a.y], [b.x, a.y, b.x, b.y], [b.x, b.y, a.x, b.y], [a.x, b.y, a.x, a.y]].map(([x1, y1, x2, y2]) => ({ x1, y1, x2, y2 }));
+  for (const e of ents) {
+    let s = e;
+    if (e.t === 'dim') { const g = dimGeom(e, 1 / view.s); s = { x1: g.p1[0], y1: g.p1[1], x2: g.p2[0], y2: g.p2[1] }; }
+    const i1 = inside(s.x1, s.y1), i2 = inside(s.x2, s.y2);
+    if (crossing ? i1 || i2 || edges.some(ed => segInt(s, ed)) : i1 && i2) sel.add(e.id);
+  }
+}
+
+// ---------- Darstellung ----------
+function dimGeom(e, k) {                     // Geometrie eines Maßes in mm; k = mm pro Pixel
+  const ax = e.x1, ay = e.y1, bx = e.x2, by = e.y2;
+  let p1, p2;                                // Enden der Maßlinie
+  if (e.mode === 'h') { p1 = [ax, e.py]; p2 = [bx, e.py]; }
+  else if (e.mode === 'v') { p1 = [e.px, ay]; p2 = [e.px, by]; }
+  else {
+    const L = Math.hypot(bx - ax, by - ay) || 1, nx = -(by - ay) / L, ny = (bx - ax) / L;
+    const off = (e.px - ax) * nx + (e.py - ay) * ny;
+    p1 = [ax + nx * off, ay + ny * off]; p2 = [bx + nx * off, by + ny * off];
+  }
+  const len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) || 1e-9;
+  const ux = (p2[0] - p1[0]) / len, uy = (p2[1] - p1[1]) / len, lines = [], tris = [];
+  for (const [q, p] of [[[ax, ay], p1], [[bx, by], p2]]) {   // Maßhilfslinien
+    const l = Math.hypot(p[0] - q[0], p[1] - q[1]);
+    if (l < 1e-9) continue;
+    const ex = (p[0] - q[0]) / l, ey = (p[1] - q[1]) / l, g = Math.min(DIM.gap * k, l / 2);
+    lines.push([q[0] + ex * g, q[1] + ey * g, p[0] + ex * DIM.over * k, p[1] + ey * DIM.over * k]);
+  }
+  const A = DIM.arrow * k, o = len < 3.5 * A ? -1 : 1;       // Pfeile außen, wenn es innen zu eng ist
+  const t = o < 0 ? 2 * A : 0;
+  lines.push([p1[0] - ux * t, p1[1] - uy * t, p2[0] + ux * t, p2[1] + uy * t]);   // Maßlinie
+  for (const [p, d] of [[p1, o], [p2, -o]]) {
+    const cx = p[0] + ux * A * d, cy = p[1] + uy * A * d, w = A * 0.17;
+    tris.push([p, [cx - uy * w, cy + ux * w], [cx + uy * w, cy - ux * w]]);
+  }
+  let deg = Math.atan2(uy, ux) * 180 / Math.PI;              // Text immer lesbar (von unten bzw. von rechts)
+  if (deg > 90 + 1e-6 || deg <= -90 + 1e-6) deg += 180;
+  const ang = deg * Math.PI / 180;
+  return { p1, p2, lines, tris, ang, deg: ((deg % 360) + 360) % 360, text: fmt(len),
+           tx: (p1[0] + p2[0]) / 2 - Math.sin(ang) * DIM.textGap * k, ty: (p1[1] + p2[1]) / 2 + Math.cos(ang) * DIM.textGap * k };
+}
+function drawDim(c, v, e, color) {
+  const g = dimGeom(e, 1 / v.s);
+  c.strokeStyle = c.fillStyle = color; c.lineWidth = 1; c.setLineDash([]);
+  c.beginPath();
+  for (const [x1, y1, x2, y2] of g.lines) { c.moveTo(...w2s(x1, y1, v)); c.lineTo(...w2s(x2, y2, v)); }
+  c.stroke();
+  for (const t of g.tris) {
+    c.beginPath();
+    t.forEach(([x, y], i) => i ? c.lineTo(...w2s(x, y, v)) : c.moveTo(...w2s(x, y, v)));
+    c.closePath(); c.fill();
+  }
+  c.save();
+  c.translate(...w2s(g.tx, g.ty, v)); c.rotate(-g.ang);
+  c.font = DIM.text + 'px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'alphabetic';
+  c.fillText(g.text, 0, 0);
+  c.restore();
+}
+function drawEnts(c, v, col, live) {
+  c.lineCap = 'round';
+  for (const e of ents) {
+    const s = live && sel.has(e.id);
+    if (e.t === 'dim') { drawDim(c, v, e, s ? col.sel : col.dim); continue; }
+    c.strokeStyle = s ? col.sel : col.line; c.lineWidth = s ? 2.5 : 1.5;
+    c.beginPath(); c.moveTo(...w2s(e.x1, e.y1, v)); c.lineTo(...w2s(e.x2, e.y2, v)); c.stroke();
+  }
+}
+function drawGrid(W, H) {
+  const m = gridUnit(), a = s2w(0, H), b = s2w(W, 0);
+  ctx.lineWidth = 1;
+  for (const [step, col] of [[m, C.grid], [m * 10, C.grid2]]) {
+    ctx.strokeStyle = col; ctx.beginPath();
+    for (let i = Math.ceil(a.x / step); i * step <= b.x; i++) { const x = Math.round(view.ox + i * step * view.s) + 0.5; ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+    for (let i = Math.ceil(a.y / step); i * step <= b.y; i++) { const y = Math.round(view.oy - i * step * view.s) + 0.5; ctx.moveTo(0, y); ctx.lineTo(W, y); }
+    ctx.stroke();
+  }
+  ctx.strokeStyle = C.axis; ctx.beginPath();                 // Achsen durch den Nullpunkt
+  const x0 = Math.round(view.ox) + 0.5, y0 = Math.round(view.oy) + 0.5;
+  ctx.moveTo(x0, 0); ctx.lineTo(x0, H); ctx.moveTo(0, y0); ctx.lineTo(W, y0);
+  ctx.stroke();
+}
+function label(text) {                       // kleines Infofeld am Zeiger
+  ctx.font = '12px system-ui, sans-serif';
+  const w = ctx.measureText(text).width + 12, h = 20;
+  const x = Math.round(Math.min(mouse.x + 16, cv.clientWidth - w - 4)), y = Math.round(Math.min(mouse.y + 18, cv.clientHeight - h - 4));
+  ctx.setLineDash([]); ctx.globalAlpha = 0.9; ctx.fillStyle = C.bg; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1;
+  ctx.strokeStyle = C.prev; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w, h);
+  ctx.fillStyle = C.prev; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, x + 6, y + h / 2 + 1);
+}
+function drawPreview() {
+  const T = target(), [tx, ty] = w2s(T.x, T.y);
+  ctx.strokeStyle = C.prev; ctx.lineWidth = 1.5; ctx.setLineDash([]);
+  if (tool === 'line' && chain.length) {
+    const a = chain[chain.length - 1];
+    ctx.beginPath(); ctx.moveTo(...w2s(a.x, a.y)); ctx.lineTo(tx, ty); ctx.stroke();
+    if (dist(a, T) > 1e-9) label(fmt(dist(a, T)) + ' mm   ' + fmt(angleDeg(a, T), 1) + '°');
+  } else if (tool === 'rect' && pts.length) {
+    const [ax, ay] = w2s(pts[0].x, pts[0].y);
+    ctx.strokeRect(ax, ay, tx - ax, ty - ay);
+    label(fmt(Math.abs(T.x - pts[0].x)) + ' × ' + fmt(Math.abs(T.y - pts[0].y)) + ' mm');
+  } else if (tool === 'dim' && pts.length === 1) {
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(...w2s(pts[0].x, pts[0].y)); ctx.lineTo(tx, ty); ctx.stroke();
+  } else if (tool === 'dim' && pts.length === 2) drawDim(ctx, view, dimEnt(T, T.mode), C.prev);
+  if (drag && drag.type === 'box') {                         // Auswahlfenster
+    ctx.setLineDash(mouse.x < drag.x0 ? [5, 4] : []); ctx.lineWidth = 1;
+    ctx.strokeRect(drag.x0 + 0.5, drag.y0 + 0.5, mouse.x - drag.x0, mouse.y - drag.y0);
+  }
+  if (tool === 'select' || T !== cur) return;
+  // Fangmarker
+  const m = 6;
+  ctx.setLineDash([]); ctx.lineWidth = 1.5; ctx.strokeStyle = cur.snap ? C.snap : C.prev;
+  ctx.beginPath();
+  if (cur.snap === 'end') ctx.rect(tx - m, ty - m, 2 * m, 2 * m);
+  else if (cur.snap === 'mid') { ctx.moveTo(tx, ty - m); ctx.lineTo(tx + m, ty + m); ctx.lineTo(tx - m, ty + m); ctx.closePath(); }
+  else if (cur.snap === 'int' || cur.snap === 'track') { ctx.moveTo(tx - m, ty - m); ctx.lineTo(tx + m, ty + m); ctx.moveTo(tx + m, ty - m); ctx.lineTo(tx - m, ty + m); }
+  else { ctx.moveTo(tx - 5, ty); ctx.lineTo(tx + 5, ty); ctx.moveTo(tx, ty - 5); ctx.lineTo(tx, ty + 5); }
+  ctx.stroke();
+  if (cur.snap === 'track') {                                // Fluchtlinie zum Endpunkt
+    ctx.setLineDash([2, 4]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(...w2s(cur.gx, cur.gy)); ctx.lineTo(tx, ty); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+function draw() {
+  const W = cv.clientWidth, H = cv.clientHeight, dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.setLineDash([]);
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+  drawGrid(W, H);
+  drawEnts(ctx, view, C, true);
+  drawPreview();
+}
+function status() {
+  let p;
+  if (flashMsg) p = flashMsg;
+  else if (tool === 'select') {
+    const one = sel.size === 1 && ents.find(e => sel.has(e.id));
+    if (one && one.t === 'line') {
+      const a = { x: one.x1, y: one.y1 }, b = { x: one.x2, y: one.y2 };
+      p = 'Linie: Länge ' + fmt(dist(a, b)) + ' mm, Winkel ' + fmt(angleDeg(a, b), 1) + '° · Entf löscht';
+    } else p = sel.size ? sel.size + (sel.size === 1 ? ' Element' : ' Elemente') + ' ausgewählt · Entf löscht' : 'AUSWAHL: Element anklicken oder Fenster aufziehen';
+  }
+  else if (tool === 'line') p = chain.length ? 'LINIE: Länge in mm tippen + Enter (Richtung = Lage des Zeigers) oder nächsten Punkt anklicken · Esc beendet' : 'LINIE: Startpunkt anklicken';
+  else if (tool === 'rect') p = pts.length ? 'RECHTECK: Breite;Höhe tippen + Enter oder zweite Ecke anklicken' : 'RECHTECK: erste Ecke anklicken';
+  else p = ['BEMASSUNG: ersten Messpunkt oder direkt eine Linie anklicken', 'BEMASSUNG: zweiten Messpunkt anklicken', 'BEMASSUNG: Lage der Maßlinie anklicken (oder Abstand tippen + Enter)'][pts.length];
+  $('prompt').textContent = p;
+  $('coords').textContent = 'X ' + fmt(cur.x) + '   Y ' + fmt(cur.y) + '   ·   Gitter ' + fmt(gridUnit(), 3) + ' mm';
+}
+function refresh() {
+  cur = resolve();
+  status();
+  if (!raf) raf = requestAnimationFrame(() => { raf = 0; draw(); });
+}
+
+// ---------- Ansicht ----------
+function zoomAt(sx, sy, f) {
+  const s = Math.min(5000, Math.max(0.002, view.s * f));
+  view.ox = sx - (sx - view.ox) * s / view.s; view.oy = sy - (sy - view.oy) * s / view.s; view.s = s;
+}
+function extents() {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const add = (x, y) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); };
+  for (const e of ents) {
+    add(e.x1, e.y1); add(e.x2, e.y2);
+    if (e.t === 'dim') { const g = dimGeom(e, 0); add(...g.p1); add(...g.p2); }
+  }
+  return ents.length ? { x0, y0, x1, y1 } : null;
+}
+function zoomFit() {
+  const b = extents(), W = cv.clientWidth, H = cv.clientHeight, m = 60;
+  if (!b) view = { s: 3, ox: 80, oy: H - 80 };
+  else {
+    const s = Math.max(0.002, Math.min(50, (W - 2 * m) / Math.max(b.x1 - b.x0, 1e-6), (H - 2 * m) / Math.max(b.y1 - b.y0, 1e-6)));
+    view = { s, ox: W / 2 - (b.x0 + b.x1) / 2 * s, oy: H / 2 + (b.y0 + b.y1) / 2 * s };
+  }
+  refresh();
+}
+
+// ---------- Datei, Export, Druck ----------
+function download(name, data, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type }));
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+function paperView() {                       // Ansicht, bei der die ganze Zeichnung auf ein Blatt (max. 1600 px) passt
+  const b = extents();
+  if (!b) { flash('Die Zeichnung ist noch leer.'); return null; }
+  const m = 50, s = (1600 - 2 * m) / Math.max(b.x1 - b.x0, b.y1 - b.y0, 1e-6);
+  const W = Math.ceil((b.x1 - b.x0) * s + 2 * m), H = Math.ceil((b.y1 - b.y0) * s + 2 * m);
+  return { s, ox: m - b.x0 * s, oy: H - m + b.y0 * s, W, H };
+}
+function renderImage(scale) {                // Zeichnung schwarz auf weiß in ein eigenes Canvas zeichnen
+  const v = paperView();
+  if (!v) return null;
+  const c = document.createElement('canvas');
+  c.width = v.W * scale; c.height = v.H * scale;
+  const g = c.getContext('2d');
+  g.scale(scale, scale); g.fillStyle = '#fff'; g.fillRect(0, 0, v.W, v.H);
+  drawEnts(g, v, { line: '#000', dim: '#000' }, false);
+  return c;
+}
+function exportPNG() { const c = renderImage(2); if (c) c.toBlob(b => download('zeichnung.png', b)); }
+function printDrawing() {
+  const c = renderImage(3);
+  if (!c) return;
+  const img = $('printimg');
+  img.onload = () => window.print();
+  img.src = c.toDataURL('image/png');
+}
+function exportDXF() {                       // einfache DXF-Datei: Linien 1:1 in mm, Maße als Linien + Text auf Layer BEMASSUNG
+  const v = paperView();
+  if (!v) return;
+  const n = x => String(Math.round(x * 1e6) / 1e6), k = 1 / v.s, out = ['0', 'SECTION', '2', 'ENTITIES'];
+  const line = (layer, x1, y1, x2, y2) => out.push('0', 'LINE', '8', layer, '10', n(x1), '20', n(y1), '11', n(x2), '21', n(y2));
+  for (const e of ents) {
+    if (e.t === 'line') { line('0', e.x1, e.y1, e.x2, e.y2); continue; }
+    const g = dimGeom(e, k), L = 'BEMASSUNG';
+    for (const l of g.lines) line(L, ...l);
+    for (const [a, b, c] of g.tris) out.push('0', 'SOLID', '8', L, '10', n(a[0]), '20', n(a[1]), '11', n(b[0]), '21', n(b[1]), '12', n(c[0]), '22', n(c[1]), '13', n(c[0]), '23', n(c[1]));
+    out.push('0', 'TEXT', '8', L, '10', n(g.tx), '20', n(g.ty), '40', n(DIM.text * 0.75 * k), '1', g.text, '50', n(g.deg), '72', '1', '11', n(g.tx), '21', n(g.ty));
+  }
+  out.push('0', 'ENDSEC', '0', 'EOF');
+  download('zeichnung.dxf', out.join('\r\n') + '\r\n', 'application/dxf');
+}
+function saveFile() { download('zeichnung.json', JSON.stringify({ format: 'mini-cad', version: 1, unit: 'mm', ents }, null, 1), 'application/json'); }
+function openFile(file) {
+  const rd = new FileReader();
+  rd.onload = () => {
+    let list = null;
+    try { const d = JSON.parse(rd.result); list = clean(Array.isArray(d) ? d : d.ents); } catch (e) { /* unten gemeldet */ }
+    if (!list || !list.length) return flash('Die Datei enthält keine lesbare Zeichnung.');
+    change(() => setEnts(list));
+    chain = []; pts = [];
+    zoomFit();
+  };
+  rd.readAsText(file);
+}
+
+// ---------- Maus / Touch ----------
+function setMouse(ev) { const r = cv.getBoundingClientRect(); mouse.x = ev.clientX - r.left; mouse.y = ev.clientY - r.top; }
+
+cv.addEventListener('mousedown', ev => { if (ev.button === 1) ev.preventDefault(); });   // kein Auto-Scroll
+cv.addEventListener('contextmenu', ev => ev.preventDefault());
+cv.addEventListener('pointerdown', ev => {
+  const f = document.activeElement;
+  if (f && f !== document.body && f !== cmd) f.blur();
+  try { cv.setPointerCapture(ev.pointerId); } catch (e) { /* egal */ }
+  setMouse(ev); flashMsg = '';
+  if (ev.pointerType === 'touch') return touchDown(ev);
+  if (ev.button === 1 || ev.button === 2 || (ev.button === 0 && spaceDown)) {
+    if (ev.button === 1) { if (ev.timeStamp - lastMid < 350) zoomFit(); lastMid = ev.timeStamp; }
+    drag = { type: 'pan', btn: ev.button, x: ev.clientX, y: ev.clientY, moved: 0 };
+    ev.preventDefault();
+  } else if (ev.button === 0) {
+    if (tool === 'select') drag = { type: 'box', x0: mouse.x, y0: mouse.y, add: ev.shiftKey };
+    else click();
+  }
+  refresh();
+});
+cv.addEventListener('pointermove', ev => {
+  if (ev.pointerType === 'touch') return touchMove(ev);
+  setMouse(ev);
+  if (drag && drag.type === 'pan') {
+    const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+    drag.moved += Math.abs(dx) + Math.abs(dy); drag.x = ev.clientX; drag.y = ev.clientY;
+    view.ox += dx; view.oy += dy;
+  }
+  refresh();
+});
+cv.addEventListener('pointerup', ev => {
+  if (ev.pointerType === 'touch') return touchUp(ev);
+  setMouse(ev);
+  if (drag && drag.type === 'pan' && drag.btn === 2 && drag.moved < 5) finish();   // Rechtsklick = Befehl beenden
+  if (drag && drag.type === 'box') endBox();
+  drag = null; refresh();
+});
+cv.addEventListener('pointercancel', () => { drag = null; touches.clear(); pinch = null; gesture = false; refresh(); });
+cv.addEventListener('wheel', ev => {
+  ev.preventDefault();
+  setMouse(ev);
+  const dy = ev.deltaMode === 1 ? ev.deltaY * 33 : ev.deltaY;
+  zoomAt(mouse.x, mouse.y, Math.exp(-dy * (ev.ctrlKey ? 0.01 : 0.0015)));
+  refresh();
+}, { passive: false });
+
+// Touch: tippen/ziehen = Punkt setzen, zwei Finger = verschieben und zoomen
+const touches = new Map();
+let pinch = null, gesture = false;
+function touchDown(ev) {
+  touches.set(ev.pointerId, [ev.clientX, ev.clientY]);
+  if (touches.size === 2) {
+    const [a, b] = [...touches.values()];
+    pinch = { d: Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, cx: (a[0] + b[0]) / 2, cy: (a[1] + b[1]) / 2, v: { ...view } };
+    gesture = true; drag = null;
+  } else if (tool === 'select' && !gesture) drag = { type: 'box', x0: mouse.x, y0: mouse.y, add: false };
+  refresh();
+}
+function touchMove(ev) {
+  if (!touches.has(ev.pointerId)) return;
+  touches.set(ev.pointerId, [ev.clientX, ev.clientY]);
+  if (pinch && touches.size === 2) {
+    const [a, b] = [...touches.values()], r = cv.getBoundingClientRect(), v = pinch.v;
+    const s = Math.min(5000, Math.max(0.002, v.s * (Math.hypot(b[0] - a[0], b[1] - a[1]) || 1) / pinch.d));
+    const wx = (pinch.cx - r.left - v.ox) / v.s, wy = (v.oy - (pinch.cy - r.top)) / v.s;
+    view = { s, ox: (a[0] + b[0]) / 2 - r.left - wx * s, oy: (a[1] + b[1]) / 2 - r.top + wy * s };
+  } else if (!gesture) setMouse(ev);
+  refresh();
+}
+function touchUp(ev) {
+  touches.delete(ev.pointerId);
+  if (gesture) { if (!touches.size) { gesture = false; pinch = null; } return; }
+  setMouse(ev);
+  if (drag && drag.type === 'box') endBox(); else if (tool !== 'select') click();
+  drag = null; refresh();
+}
+
+// ---------- Tastatur ----------
+function toggle(id, key) { opt[key] = $(id).checked = !opt[key]; save(); }
+
+window.addEventListener('keydown', ev => {
+  const t = ev.target, k = ev.key;
+  if ((t instanceof HTMLInputElement && t !== cmd && t.type !== 'checkbox') || t instanceof HTMLSelectElement) {
+    if (k === 'Escape' || k === 'Enter') t.blur();
+    return;
+  }
+  const altGr = ev.getModifierState('AltGraph');              // AltGr (z. B. für @) meldet sich als Strg+Alt
+  flashMsg = '';
+  if ((ev.ctrlKey || ev.metaKey) && !altGr) {
+    const l = k.toLowerCase();
+    if (l === 'z') { ev.preventDefault(); if (ev.shiftKey) redo(); else undo(); }
+    else if (l === 'y') { ev.preventDefault(); redo(); }
+    else if (l === 's') { ev.preventDefault(); saveFile(); }
+    return;
+  }
+  if (ev.altKey && !altGr) return;
+  if (k === 'Escape') escape();
+  else if (k === 'Enter') applyTyped();
+  else if (k === 'Delete' || k === 'Backspace') {
+    if (cmd.value) { if (t === cmd) return; cmd.value = cmd.value.slice(0, -1); }
+    else delSel();
+  }
+  else if (k === 'F3') toggle('oSnap', 'osnap');
+  else if (k === 'F8') toggle('oAng', 'ang');
+  else if (k === 'F9') toggle('oGrid', 'grid');
+  else if (k === ' ') { spaceDown = true; cv.style.cursor = 'grab'; }
+  else if (/^[0-9.,;<@+\-]$/.test(k)) { if (t === cmd) return; cmd.value += k; }
+  else if (k.length === 1) {
+    const l = k.toLowerCase();
+    if (l === 'l') setTool('line');
+    else if (l === 'r') setTool('rect');
+    else if (l === 'b' || l === 'd') setTool('dim');
+    else if (l === 'a') setTool('select');
+    else if (l === 'c' && tool === 'line' && chain.length > 2) pick(chain[0]);
+  }
+  else return;
+  ev.preventDefault();
+  refresh();
+});
+window.addEventListener('keyup', ev => { if (ev.key === ' ') { spaceDown = false; cv.style.cursor = ''; } });
+window.addEventListener('blur', () => { spaceDown = false; cv.style.cursor = ''; });
+cmd.addEventListener('input', () => { cmd.value = cmd.value.replace(/[^0-9.,;<@+\-]/g, ''); refresh(); });
+
+// ---------- Bedienelemente ----------
+document.querySelectorAll('[data-tool]').forEach(b => { b.onclick = () => setTool(b.dataset.tool); });
+$('undo').onclick = undo; $('redo').onclick = redo; $('del').onclick = delSel; $('fit').onclick = zoomFit;
+$('ok').onclick = applyTyped;
+$('png').onclick = exportPNG; $('dxf').onclick = exportDXF; $('print').onclick = printDrawing; $('save').onclick = saveFile;
+$('open').onclick = () => $('file').click();
+$('file').onchange = ev => { if (ev.target.files[0]) openFile(ev.target.files[0]); ev.target.value = ''; };
+$('new').onclick = () => {
+  if (!ents.length) return;
+  change(() => setEnts([]));
+  chain = []; pts = [];
+  zoomFit();
+  flash('Zeichnung geleert – Strg+Z holt sie zurück.');
+};
+$('helpBtn').onclick = () => { $('help').hidden = !$('help').hidden; };
+for (const [id, key] of [['oAng', 'ang'], ['oSnap', 'osnap'], ['oGrid', 'grid']]) $(id).onchange = ev => { opt[key] = ev.target.checked; save(); refresh(); };
+$('oStep').onchange = ev => { opt.step = +ev.target.value; ev.target.blur(); save(); refresh(); };
+$('oGridStep').onchange = ev => {
+  const v = parseFloat(ev.target.value);
+  if (v > 0) opt.gridStep = v;
+  ev.target.value = opt.gridStep; save(); refresh();
+};
+
+// ---------- Start ----------
+function readColors() {
+  const cs = getComputedStyle(document.documentElement);
+  for (const k of ['bg', 'grid', 'grid2', 'axis', 'line', 'dim', 'sel', 'snap', 'prev']) C[k] = cs.getPropertyValue('--cv-' + k).trim();
+}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { readColors(); refresh(); });
+
+try {                                        // letzte Zeichnung aus dem Browser-Speicher holen
+  const d = JSON.parse(localStorage.getItem(KEY));
+  if (d) {
+    setEnts(clean(d.ents));
+    const o = d.opt || {};
+    for (const k of ['ang', 'osnap', 'grid']) if (typeof o[k] === 'boolean') opt[k] = o[k];
+    if ([15, 30, 45, 90].includes(o.step)) opt.step = o.step;
+    if (o.gridStep > 0) opt.gridStep = o.gridStep;
+  }
+} catch (e) { /* nichts gespeichert */ }
+
+$('oAng').checked = opt.ang; $('oSnap').checked = opt.osnap; $('oGrid').checked = opt.grid;
+$('oStep').value = opt.step; $('oGridStep').value = opt.gridStep;
+readColors();
+
+let started = false;
+new ResizeObserver(() => {
+  const d = window.devicePixelRatio || 1;
+  cv.width = Math.round(cv.clientWidth * d); cv.height = Math.round(cv.clientHeight * d);
+  if (!started && cv.clientWidth) {
+    started = true;
+    mouse.x = cv.clientWidth / 2; mouse.y = cv.clientHeight / 2;
+    setTool('line');
+    zoomFit();
+  }
+  draw();
+}).observe(cv);
+</script>
+</body>
+</html>
