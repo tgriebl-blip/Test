@@ -64,6 +64,13 @@
     <button data-tool="dim" title="Bemaßung (B)">Bemaßung</button>
   </span>
   <span class="grp">
+    <button data-tool="move" title="Ausgewählte Elemente verschieben (M)">Verschieben</button>
+    <button data-tool="copy" title="Ausgewählte Elemente kopieren (K)">Kopieren</button>
+    <button data-tool="offset" title="Linie parallel in festem Abstand kopieren (V)">Versetzen</button>
+    <button data-tool="trim" title="Überstand bis zur nächsten Kreuzung entfernen (T)">Stutzen</button>
+    <button data-tool="corner" title="Zwei Linien zu einer sauberen Ecke kürzen/verlängern (E)">Ecke</button>
+  </span>
+  <span class="grp">
     <button id="undo" title="Rückgängig (Strg+Z)">↶</button>
     <button id="redo" title="Wiederholen (Strg+Y)">↷</button>
     <button id="del" title="Auswahl löschen (Entf)">Löschen</button>
@@ -102,7 +109,16 @@
     <p>Zwei Punkte (oder direkt eine Linie) anklicken, dann die Lage der Maßlinie anklicken oder ihren Abstand tippen.
        Bei schrägen Strecken: Maus ober-/unterhalb = horizontales Maß, seitlich = vertikales Maß, sonst ausgerichtet.</p>
     <h3>Auswahl (A)</h3>
-    <p>Element anklicken (Umschalt = mehrere) oder Fenster aufziehen (nach links gezogen = auch Angeschnittenes). Entf löscht.</p>
+    <p>Element anklicken (Umschalt = mehrere) oder Fenster aufziehen (nach links gezogen = auch Angeschnittenes). Entf löscht, Strg+A wählt alles.</p>
+    <h3>Verschieben (M) · Kopieren (K)</h3>
+    <p>Elemente auswählen, Befehl wählen, Basispunkt anklicken, dann Zielpunkt anklicken – oder Richtung zeigen, <b>Abstand tippen</b> und Enter.
+       Kopieren legt weitere Kopien ab, bis Esc gedrückt wird.</p>
+    <h3>Versetzen (V)</h3>
+    <p>Linie anklicken, Maus auf die gewünschte Seite bewegen, Abstand tippen + Enter: erzeugt eine parallele Kopie.
+       Der Abstand bleibt gemerkt – bei der nächsten Linie genügt ein Klick auf die Seite.</p>
+    <h3>Stutzen (T) · Ecke (E)</h3>
+    <p>Stutzen: den Überstand anklicken – er wird bis zur nächsten Kreuzung entfernt.
+       Ecke: zwei Linien anklicken (jeweils auf dem Teil, der bleiben soll) – beide werden zu einer sauberen Ecke gekürzt oder verlängert.</p>
     <h3>Fang</h3>
     <p>□ Endpunkt · △ Mittelpunkt · ✕ Schnittpunkt · gepunktete Linie = fluchtet mit einem Endpunkt.
        F3 Objektfang, F8 Winkelfang, F9 Rasterfang.</p>
@@ -137,7 +153,10 @@ let view = { s: 3, ox: 80, oy: 400 };            // Bildschirm = (ox + x*s, oy -
 const mouse = { x: 0, y: 0 };
 let cur = { x: 0, y: 0, snap: null };            // Zeigerposition nach dem Fang
 let chain = [];       // Linie: Punkte des laufenden Linienzugs
-let pts = [];         // Rechteck/Bemaßung: bereits gesetzte Punkte
+let pts = [];         // Rechteck/Bemaßung/Verschieben/Kopieren: bereits gesetzte Punkte
+let selecting = false;                           // Verschieben/Kopieren: erst noch Elemente auswählen
+let first = null;                                // Versetzen/Ecke: zuerst angeklickte Linie {id, x, y}
+let offDist = 0;                                 // zuletzt benutzter Abstand beim Versetzen
 let lastDir = 0, drag = null, spaceDown = false, lastMid = 0, raf = 0, flashMsg = '', flashTimer = 0;
 let undoStack = [], redoStack = [];
 const opt = { ang: true, step: 45, osnap: true, grid: true, gridStep: 1 };
@@ -154,6 +173,19 @@ const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
 const same = (a, b) => Math.abs(a.x - b.x) < 1e-7 && Math.abs(a.y - b.y) < 1e-7;
 const angleDeg = (a, b) => (Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI + 360) % 360;
 const num = s => /^[+-]?(\d+([.,]\d*)?|[.,]\d+)$/.test(s = s.trim()) ? parseFloat(s.replace(',', '.')) : NaN;
+const byId = id => ents.find(e => e.id === id);
+const moving = () => tool === 'move' || tool === 'copy';
+const boxMode = () => tool === 'select' || selecting;                                        // Klick/Fenster wählt Elemente aus
+const freePick = () => boxMode() || tool === 'offset' || tool === 'trim' || tool === 'corner';   // Zeiger pickt Elemente, kein Punktfang
+function rayBase() {                         // Ausgangspunkt für Winkelfang und getippte Längen
+  if (tool === 'line') return chain[chain.length - 1] || null;
+  return moving() && pts.length ? pts[0] : null;
+}
+function shiftEnt(e, dx, dy) {               // Element (Linie oder Maß) verschieben
+  e.x1 = R(e.x1 + dx); e.y1 = R(e.y1 + dy); e.x2 = R(e.x2 + dx); e.y2 = R(e.y2 + dy);
+  if (e.t === 'dim') { e.px = R(e.px + dx); e.py = R(e.py + dy); }
+  return e;
+}
 
 function fmt(n, d = 2) {
   let s = n.toFixed(d);
@@ -220,8 +252,8 @@ function curDir(base) {                      // Zeichenrichtung in Grad – abh�
 }
 function resolve() {                         // Zeigerposition -> Zeichenpunkt (Objektfang > Winkelfang > Rasterfang)
   const w = s2w(mouse.x, mouse.y), res = { x: w.x, y: w.y, snap: null };
-  if (tool === 'select') return res;
-  const base = tool === 'line' ? chain[chain.length - 1] : null;
+  if (freePick()) return res;
+  const base = rayBase();
   const placing = tool === 'dim' && pts.length === 2;
   const g = opt.grid && opt.gridStep > 0 ? opt.gridStep : 0;
   const s = opt.osnap && !placing ? findSnap(w, base) : null;
@@ -257,8 +289,8 @@ function resolve() {                         // Zeigerposition -> Zeichenpunkt (
 
 // ---------- Eingabe von Werten ----------
 function typedPoint(s) {                     // getippten Text in einen Punkt umrechnen (oder null)
-  if (tool === 'select') return null;
-  const base = tool === 'line' ? chain[chain.length - 1] : pts[pts.length - 1];
+  if (freePick()) return null;
+  const ray = rayBase(), base = ray || pts[pts.length - 1];
   const w = s2w(mouse.x, mouse.y), placing = tool === 'dim' && pts.length === 2;
   const rel = s[0] === '@';
   if (rel) s = s.slice(1);
@@ -272,13 +304,13 @@ function typedPoint(s) {                     // getippten Text in einen Punkt um
   if (rel || !base) return null;
   if (s.includes('<')) {                     // Länge<Winkel
     const [l, a, more] = s.split('<').map(num);
-    if (tool !== 'line' || isNaN(l) || isNaN(a) || more !== undefined || !l) return null;
+    if (!ray || isNaN(l) || isNaN(a) || more !== undefined || !l) return null;
     const [dx, dy] = dirVec(a);
     return { x: base.x + l * dx, y: base.y + l * dy };
   }
   const l = num(s);
   if (isNaN(l) || !l) return null;
-  if (tool === 'line') { const [dx, dy] = dirVec(curDir(base)); return { x: base.x + l * dx, y: base.y + l * dy }; }
+  if (ray) { const [dx, dy] = dirVec(curDir(base)); return { x: base.x + l * dx, y: base.y + l * dy }; }
   if (tool === 'rect') return { x: base.x + Math.abs(l) * (w.x < base.x ? -1 : 1), y: base.y + Math.abs(l) * (w.y < base.y ? -1 : 1) };
   if (placing) {                             // Abstand der Maßlinie
     const [a, b] = pts, mode = dimMode(a, b, w), d = Math.abs(l);
@@ -296,6 +328,13 @@ function target() {                          // der Punkt, der bei Klick/Enter g
 function applyTyped() {
   const s = cmd.value.trim();
   if (!s) return finish();
+  if (tool === 'offset') {                   // Abstand für das Versetzen
+    const d = num(s);
+    if (!(d > 0)) return flash('Bitte einen Abstand größer 0 tippen.');
+    offDist = d; cmd.value = '';
+    if (first) doOffset();
+    return refresh();
+  }
   const p = typedPoint(s);
   if (!p) return flash('Eingabe „' + s + '“ passt hier nicht.');
   cmd.value = '';
@@ -338,10 +377,86 @@ function pick(p, mode) {                     // einen Punkt an den aktiven Befeh
     const e = dimEnt(p, mode);
     change(() => ents.push({ id: nextId++, ...e }));
     pts = [];
+  } else if (moving()) {
+    const a = pts[0];
+    if (!a) { pts = [p]; return; }                           // Basispunkt
+    if (same(a, p)) return;
+    const dx = p.x - a.x, dy = p.y - a.y;
+    lastDir = angleDeg(a, p);
+    if (tool === 'copy') change(() => { for (const e of ents.filter(e => sel.has(e.id))) ents.push(shiftEnt({ ...e, id: nextId++ }, dx, dy)); });
+    else { change(() => { for (const e of ents) if (sel.has(e.id)) shiftEnt(e, dx, dy); }); setTool('select'); }
   }
 }
+
+// ---------- Ändern: Versetzen, Stutzen, Ecke ----------
+function offsetLine() {                      // Parallele zur gewählten Linie auf der Seite des Zeigers (oder null)
+  const e = first && byId(first.id), typed = num(cmd.value), d = typed > 0 ? typed : offDist;
+  if (!e || !(d > 0)) return null;
+  const L = Math.hypot(e.x2 - e.x1, e.y2 - e.y1), nx = -(e.y2 - e.y1) / L, ny = (e.x2 - e.x1) / L, w = s2w(mouse.x, mouse.y);
+  const s = (w.x - e.x1) * nx + (w.y - e.y1) * ny < 0 ? -d : d;
+  return { d, x1: R(e.x1 + nx * s), y1: R(e.y1 + ny * s), x2: R(e.x2 + nx * s), y2: R(e.y2 + ny * s) };
+}
+function doOffset() {
+  const o = offsetLine();
+  if (!o) return flash('Erst den Abstand in mm tippen und Enter drücken.');
+  change(() => ents.push({ id: nextId++, t: 'line', x1: o.x1, y1: o.y1, x2: o.x2, y2: o.y2 }));
+  offDist = o.d; cmd.value = ''; first = null;
+}
+function trimPart(e, w) {                    // Teilstück der Linie e am Punkt w, begrenzt durch die nächsten Kreuzungen
+  const dx = e.x2 - e.x1, dy = e.y2 - e.y1, L2 = dx * dx + dy * dy, eps = 1e-7 / Math.sqrt(L2);
+  const t0 = ((w.x - e.x1) * dx + (w.y - e.y1) * dy) / L2;
+  let lo = 0, hi = 1;
+  for (const o of ents) {
+    if (o === e || o.t !== 'line') continue;
+    const p = segInt(e, o);
+    if (!p) continue;
+    const t = ((p.x - e.x1) * dx + (p.y - e.y1) * dy) / L2;
+    if (t < eps || t > 1 - eps) continue;                    // Berührung am Linienende zählt nicht
+    if (t < t0) lo = Math.max(lo, t); else hi = Math.min(hi, t);
+  }
+  if (!lo && hi === 1) return null;
+  const P = t => ({ x: R(e.x1 + t * dx), y: R(e.y1 + t * dy) });
+  return { a: lo ? P(lo) : null, b: hi < 1 ? P(hi) : null };  // entfernt wird a..b (null = bis zum Linienende)
+}
+function doTrim(e, w) {
+  const r = trimPart(e, w);
+  if (!r) return flash('Diese Linie kreuzt keine andere – löschen geht mit Auswahl + Entf.');
+  change(() => {
+    const rest = [];
+    if (r.a) rest.push({ ...e, x2: r.a.x, y2: r.a.y });
+    if (r.b) rest.push({ ...e, id: r.a ? nextId++ : e.id, x1: r.b.x, y1: r.b.y });
+    ents.splice(ents.indexOf(e), 1, ...rest);
+  });
+}
+function cornerResult(a, pa, b, pb) {        // beide Linien bis zum gemeinsamen Schnittpunkt kürzen bzw. verlängern
+  const ax = a.x2 - a.x1, ay = a.y2 - a.y1, bx = b.x2 - b.x1, by = b.y2 - b.y1, den = ax * by - ay * bx;
+  if (Math.abs(den) <= 1e-10 * Math.hypot(ax, ay) * Math.hypot(bx, by)) return null;      // parallel
+  const t = ((b.x1 - a.x1) * by - (b.y1 - a.y1) * bx) / den, u = ((b.x1 - a.x1) * ay - (b.y1 - a.y1) * ax) / den;
+  const I = { x: R(a.x1 + t * ax), y: R(a.y1 + t * ay) };
+  const fix = (e, t, p) => {                 // t = Lage des Schnittpunkts auf e; der angeklickte Teil bleibt
+    const dx = e.x2 - e.x1, dy = e.y2 - e.y1, tc = ((p.x - e.x1) * dx + (p.y - e.y1) * dy) / (dx * dx + dy * dy);
+    return t <= 1e-9 || (t < 1 - 1e-9 && tc >= t) ? { ...e, x1: I.x, y1: I.y } : { ...e, x2: I.x, y2: I.y };
+  };
+  return [fix(a, t, pa), fix(b, u, pb)];
+}
+function doCorner(b, pb) {
+  const a = byId(first.id), r = a && cornerResult(a, first, b, pb);
+  if (!r) flash('Parallele Linien ergeben keine Ecke.');
+  else change(() => { ents[ents.indexOf(a)] = r[0]; ents[ents.indexOf(b)] = r[1]; });
+  first = null;
+}
+
 function click() {
   cur = resolve();
+  const w = s2w(mouse.x, mouse.y);
+  if (tool === 'trim') { const e = hit(mouse.x, mouse.y, 'line'); if (e) doTrim(e, w); return; }
+  if (tool === 'offset' && first) return doOffset();
+  if (tool === 'offset' || tool === 'corner') {
+    const e = hit(mouse.x, mouse.y, 'line', first && first.id);
+    if (!e) return;
+    if (first) doCorner(e, w); else first = { id: e.id, x: w.x, y: w.y };
+    return;
+  }
   if (tool === 'dim' && !pts.length && !cur.snap) {          // Linie direkt anklicken = beide Endpunkte
     const e = hit(mouse.x, mouse.y, 'line');
     if (e) { pts = [{ x: e.x1, y: e.y1 }, { x: e.x2, y: e.y2 }]; return; }
@@ -350,24 +465,36 @@ function click() {
   cmd.value = '';
   pick(p, p.mode);
 }
-function finish() { chain = []; pts = []; refresh(); }      // Enter / Rechtsklick
+function finish() {                          // Enter / Rechtsklick
+  if (selecting) { if (sel.size) selecting = false; else flash('Erst Elemente anklicken oder ein Fenster aufziehen.'); }
+  else if (moving()) return setTool('select');
+  else { chain = []; pts = []; first = null; }
+  refresh();
+}
 function escape() {
   if (cmd.value) cmd.value = '';
-  else if (chain.length || pts.length) { chain = []; pts = []; }
+  else if (chain.length || pts.length || first) { chain = []; pts = []; first = null; }
+  else if (moving()) return setTool('select');
   else if (sel.size) sel.clear();
   else if (!$('help').hidden) $('help').hidden = true;
   else return setTool('select');
   refresh();
 }
 function setTool(t) {
+  const one = t === 'offset' && sel.size === 1 && ents.find(e => sel.has(e.id) && e.t === 'line');   // vorgewählte Linie übernehmen
   tool = t; chain = []; pts = []; cmd.value = '';
-  if (t !== 'select') sel.clear();
+  if (t !== 'select' && !moving()) sel.clear();
+  selecting = moving() && !sel.size;
+  first = one ? { id: one.id } : null;
   document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
   refresh();
 }
 
 // ---------- Änderungen, Rückgängig, Speichern ----------
-function setEnts(list) { ents = list; nextId = ents.reduce((m, e) => Math.max(m, e.id), 0) + 1; sel.clear(); }
+function setEnts(list) {
+  ents = list; nextId = ents.reduce((m, e) => Math.max(m, e.id), 0) + 1; first = null;
+  for (const id of [...sel]) if (!byId(id)) sel.delete(id);   // Auswahl behalten, soweit es die Elemente noch gibt
+}
 function save() { try { localStorage.setItem(KEY, JSON.stringify({ ents, opt })); } catch (e) { /* kein Speicher verfügbar */ } }
 function change(fn) {
   undoStack.push(JSON.stringify(ents));
@@ -405,11 +532,11 @@ function clean(list) {                       // geladene Daten prüfen
 }
 
 // ---------- Auswahl ----------
-function hit(sx, sy, only) {                 // Element unter dem Zeiger
+function hit(sx, sy, only, skip) {           // Element unter dem Zeiger
   const w = s2w(sx, sy), k = 1 / view.s;
   let best = null, bd = 6 * k;
   for (const e of ents) {
-    if (only && e.t !== only) continue;
+    if ((only && e.t !== only) || e.id === skip) continue;
     let d;
     if (e.t === 'line') d = distSeg(w.x, w.y, e.x1, e.y1, e.x2, e.y2);
     else {
@@ -521,8 +648,13 @@ function label(text) {                       // kleines Infofeld am Zeiger
   ctx.fillStyle = C.prev; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.fillText(text, x + 6, y + h / 2 + 1);
 }
+function strokeLine(e, color, width, dash) {
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash || []);
+  ctx.beginPath(); ctx.moveTo(...w2s(e.x1, e.y1)); ctx.lineTo(...w2s(e.x2, e.y2)); ctx.stroke();
+  ctx.setLineDash([]);
+}
 function drawPreview() {
-  const T = target(), [tx, ty] = w2s(T.x, T.y);
+  const T = target(), [tx, ty] = w2s(T.x, T.y), w = s2w(mouse.x, mouse.y);
   ctx.strokeStyle = C.prev; ctx.lineWidth = 1.5; ctx.setLineDash([]);
   if (tool === 'line' && chain.length) {
     const a = chain[chain.length - 1];
@@ -536,11 +668,31 @@ function drawPreview() {
     ctx.setLineDash([4, 4]);
     ctx.beginPath(); ctx.moveTo(...w2s(pts[0].x, pts[0].y)); ctx.lineTo(tx, ty); ctx.stroke();
   } else if (tool === 'dim' && pts.length === 2) drawDim(ctx, view, dimEnt(T, T.mode), C.prev);
+  else if (moving() && pts.length) {                         // Auswahl an der neuen Stelle
+    const a = pts[0], dx = T.x - a.x, dy = T.y - a.y;
+    for (const e of ents) {
+      if (!sel.has(e.id)) continue;
+      const c = shiftEnt({ ...e }, dx, dy);
+      if (c.t === 'dim') drawDim(ctx, view, c, C.prev); else strokeLine(c, C.prev, 1.5);
+    }
+    strokeLine({ x1: a.x, y1: a.y, x2: T.x, y2: T.y }, C.prev, 1, [4, 4]);
+    if (dist(a, T) > 1e-9) label(fmt(dist(a, T)) + ' mm   ' + fmt(angleDeg(a, T), 1) + '°');
+  } else if (tool === 'trim') {                              // Teilstück, das entfernt würde
+    const e = hit(mouse.x, mouse.y, 'line'), r = e && trimPart(e, w);
+    if (r) strokeLine({ x1: r.a ? r.a.x : e.x1, y1: r.a ? r.a.y : e.y1, x2: r.b ? r.b.x : e.x2, y2: r.b ? r.b.y : e.y2 }, C.sel, 3, [6, 5]);
+  } else if (tool === 'offset' || tool === 'corner') {
+    const f = first && byId(first.id), e = hit(mouse.x, mouse.y, 'line', f && f.id);
+    const o = tool === 'offset' && f && offsetLine(), r = tool === 'corner' && f && e && cornerResult(f, first, e, w);
+    if (r) r.forEach(l => strokeLine(l, C.prev, 2.5));       // Ergebnis der Ecke
+    else if (f) strokeLine(f, C.prev, 2.5);                  // gewählte Linie
+    else if (e) strokeLine(e, C.prev, 2.5);                  // Linie unter dem Zeiger
+    if (o) { strokeLine(o, C.prev, 1.5); label('Abstand ' + fmt(o.d) + ' mm'); }
+  }
   if (drag && drag.type === 'box') {                         // Auswahlfenster
     ctx.setLineDash(mouse.x < drag.x0 ? [5, 4] : []); ctx.lineWidth = 1;
     ctx.strokeRect(drag.x0 + 0.5, drag.y0 + 0.5, mouse.x - drag.x0, mouse.y - drag.y0);
   }
-  if (tool === 'select' || T !== cur) return;
+  if (freePick() || T !== cur) return;
   // Fangmarker
   const m = 6;
   ctx.setLineDash([]); ctx.lineWidth = 1.5; ctx.strokeStyle = cur.snap ? C.snap : C.prev;
@@ -573,8 +725,19 @@ function status() {
     if (one && one.t === 'line') {
       const a = { x: one.x1, y: one.y1 }, b = { x: one.x2, y: one.y2 };
       p = 'Linie: Länge ' + fmt(dist(a, b)) + ' mm, Winkel ' + fmt(angleDeg(a, b), 1) + '° · Entf löscht';
-    } else p = sel.size ? sel.size + (sel.size === 1 ? ' Element' : ' Elemente') + ' ausgewählt · Entf löscht' : 'AUSWAHL: Element anklicken oder Fenster aufziehen';
+    } else p = sel.size ? sel.size + (sel.size === 1 ? ' Element' : ' Elemente') + ' ausgewählt · M verschieben · K kopieren · Entf löscht' : 'AUSWAHL: Element anklicken oder Fenster aufziehen';
   }
+  else if (moving()) {
+    const n = tool === 'move' ? 'VERSCHIEBEN: ' : 'KOPIEREN: ', cnt = sel.size + (sel.size === 1 ? ' Element' : ' Elemente');
+    p = n + (selecting ? 'Elemente anklicken oder Fenster aufziehen, dann Enter oder Rechtsklick' + (sel.size ? ' (' + cnt + ' gewählt)' : '')
+      : !pts.length ? 'Basispunkt anklicken (' + cnt + ')'
+      : 'Zielpunkt anklicken oder Abstand in mm tippen + Enter (Richtung = Lage des Zeigers)' + (tool === 'copy' ? ' · Esc beendet' : ''));
+  }
+  else if (tool === 'offset') p = !first ? 'VERSETZEN: Linie anklicken, die parallel kopiert werden soll'
+    : offDist ? 'VERSETZEN: Seite anklicken (Abstand ' + fmt(offDist) + ' mm) oder neuen Abstand tippen + Enter'
+    : 'VERSETZEN: Abstand in mm tippen + Enter – die Lage des Zeigers bestimmt die Seite';
+  else if (tool === 'trim') p = 'STUTZEN: den Überstand anklicken, der entfernt werden soll';
+  else if (tool === 'corner') p = first ? 'ECKE: zweite Linie anklicken' : 'ECKE: erste Linie anklicken – jeweils auf dem Teil, der bleiben soll';
   else if (tool === 'line') p = chain.length ? 'LINIE: Länge in mm tippen + Enter (Richtung = Lage des Zeigers) oder nächsten Punkt anklicken · Esc beendet' : 'LINIE: Startpunkt anklicken';
   else if (tool === 'rect') p = pts.length ? 'RECHTECK: Breite;Höhe tippen + Enter oder zweite Ecke anklicken' : 'RECHTECK: erste Ecke anklicken';
   else p = ['BEMASSUNG: ersten Messpunkt oder direkt eine Linie anklicken', 'BEMASSUNG: zweiten Messpunkt anklicken', 'BEMASSUNG: Lage der Maßlinie anklicken (oder Abstand tippen + Enter)'][pts.length];
@@ -582,6 +745,7 @@ function status() {
   $('coords').textContent = 'X ' + fmt(cur.x) + '   Y ' + fmt(cur.y) + '   ·   Gitter ' + fmt(gridUnit(), 3) + ' mm';
 }
 function refresh() {
+  if (moving() && !sel.size && !selecting) { selecting = true; pts = []; }   // Auswahl ging verloren (z. B. Rückgängig)
   cur = resolve();
   status();
   if (!raf) raf = requestAnimationFrame(() => { raf = 0; draw(); });
@@ -666,6 +830,7 @@ function openFile(file) {
     let list = null;
     try { const d = JSON.parse(rd.result); list = clean(Array.isArray(d) ? d : d.ents); } catch (e) { /* unten gemeldet */ }
     if (!list || !list.length) return flash('Die Datei enthält keine lesbare Zeichnung.');
+    sel.clear();
     change(() => setEnts(list));
     chain = []; pts = [];
     zoomFit();
@@ -689,7 +854,7 @@ cv.addEventListener('pointerdown', ev => {
     drag = { type: 'pan', btn: ev.button, x: ev.clientX, y: ev.clientY, moved: 0 };
     ev.preventDefault();
   } else if (ev.button === 0) {
-    if (tool === 'select') drag = { type: 'box', x0: mouse.x, y0: mouse.y, add: ev.shiftKey };
+    if (boxMode()) drag = { type: 'box', x0: mouse.x, y0: mouse.y, add: ev.shiftKey || selecting };
     else click();
   }
   refresh();
@@ -729,7 +894,7 @@ function touchDown(ev) {
     const [a, b] = [...touches.values()];
     pinch = { d: Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, cx: (a[0] + b[0]) / 2, cy: (a[1] + b[1]) / 2, v: { ...view } };
     gesture = true; drag = null;
-  } else if (tool === 'select' && !gesture) drag = { type: 'box', x0: mouse.x, y0: mouse.y, add: false };
+  } else if (boxMode() && !gesture) drag = { type: 'box', x0: mouse.x, y0: mouse.y, add: selecting };
   refresh();
 }
 function touchMove(ev) {
@@ -747,7 +912,7 @@ function touchUp(ev) {
   touches.delete(ev.pointerId);
   if (gesture) { if (!touches.size) { gesture = false; pinch = null; } return; }
   setMouse(ev);
-  if (drag && drag.type === 'box') endBox(); else if (tool !== 'select') click();
+  if (drag && drag.type === 'box') endBox(); else if (!boxMode()) click();
   drag = null; refresh();
 }
 
@@ -767,6 +932,7 @@ window.addEventListener('keydown', ev => {
     if (l === 'z') { ev.preventDefault(); if (ev.shiftKey) redo(); else undo(); }
     else if (l === 'y') { ev.preventDefault(); redo(); }
     else if (l === 's') { ev.preventDefault(); saveFile(); }
+    else if (l === 'a') { ev.preventDefault(); if (!boxMode()) setTool('select'); for (const e of ents) sel.add(e.id); refresh(); }
     return;
   }
   if (ev.altKey && !altGr) return;
@@ -787,6 +953,11 @@ window.addEventListener('keydown', ev => {
     else if (l === 'r') setTool('rect');
     else if (l === 'b' || l === 'd') setTool('dim');
     else if (l === 'a') setTool('select');
+    else if (l === 'm') setTool('move');
+    else if (l === 'k') setTool('copy');
+    else if (l === 'v' || l === 'o') setTool('offset');
+    else if (l === 't') setTool('trim');
+    else if (l === 'e') setTool('corner');
     else if (l === 'c' && tool === 'line' && chain.length > 2) pick(chain[0]);
   }
   else return;
