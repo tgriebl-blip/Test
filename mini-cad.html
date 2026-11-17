@@ -2,49 +2,86 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Mini-CAD</title>
+<meta name="claude:viewport-fit-sides" content="cover">
 <style>
+  /* Werkstatt-Look: ruhige Bedienleiste, weißes Zeichenblatt mit mm-Gitter; Blau = Werkzeug und Vorschau, Pink = Auswahl, Orange = Fang */
   :root {
-    color-scheme: light dark;
-    --ui-bg: #f3f4f6; --ui-fg: #1c2024; --ui-border: #c9ced6; --ui-btn: #ffffff; --ui-active: #1c64d8; --ui-muted: #5f6772;
+    color-scheme: light;
+    --ui-bg: #f3f4f6; --ui-fg: #1c2024; --ui-border: #c9ced6; --ui-btn: #ffffff; --ui-active: #1c64d8; --ui-on: #ffffff;
+    --ui-muted: #5f6772; --ui-warn: #c92a2a; --ui-cur: #e2ebfa; --ui-shadow: rgba(20, 30, 50, 0.18);
     --cv-bg: #ffffff; --cv-grid: #eff1f4; --cv-grid2: #dadee4; --cv-axis: #aab1bb;
-    --cv-line: #14171a; --cv-dim: #0b7a43; --cv-sel: #d6336c; --cv-snap: #e8590c; --cv-prev: #1c64d8;
+    --cv-line: #14171a; --cv-sel: #d6336c; --cv-snap: #e8590c; --cv-prev: #1c64d8;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
-      --ui-bg: #23272e; --ui-fg: #e6e9ee; --ui-border: #3c424c; --ui-btn: #2e333c; --ui-active: #2f7df6; --ui-muted: #9aa3af;
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ui-bg: #23272e; --ui-fg: #e6e9ee; --ui-border: #3c424c; --ui-btn: #2e333c; --ui-active: #2f7df6; --ui-on: #ffffff;
+      --ui-muted: #9aa3af; --ui-warn: #e03131; --ui-cur: #263752; --ui-shadow: rgba(0, 0, 0, 0.5);
       --cv-bg: #15181c; --cv-grid: #1d2126; --cv-grid2: #2a2f37; --cv-axis: #4b535f;
-      --cv-line: #f2f4f7; --cv-dim: #5fd39a; --cv-sel: #ff6b9d; --cv-snap: #ffa94d; --cv-prev: #6aa9ff;
+      --cv-line: #f2f4f7; --cv-sel: #ff6b9d; --cv-snap: #ffa94d; --cv-prev: #6aa9ff;
     }
   }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ui-bg: #23272e; --ui-fg: #e6e9ee; --ui-border: #3c424c; --ui-btn: #2e333c; --ui-active: #2f7df6; --ui-on: #ffffff;
+    --ui-muted: #9aa3af; --ui-warn: #e03131; --ui-cur: #263752; --ui-shadow: rgba(0, 0, 0, 0.5);
+    --cv-bg: #15181c; --cv-grid: #1d2126; --cv-grid2: #2a2f37; --cv-axis: #4b535f;
+    --cv-line: #f2f4f7; --cv-sel: #ff6b9d; --cv-snap: #ffa94d; --cv-prev: #6aa9ff;
+  }
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
-  body { display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; overflow: hidden;
          font: 13px/1.35 system-ui, sans-serif; background: var(--ui-bg); color: var(--ui-fg); }
-  #bar, #status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 6px 8px; }
+  #bar, #status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding-block: 6px;
+                  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
   #bar { border-bottom: 1px solid var(--ui-border); }
   #status { border-top: 1px solid var(--ui-border); }
   .grp { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
   .grp label { display: flex; align-items: center; gap: 3px; margin-left: 4px; white-space: nowrap; }
-  button, select, input[type=number], #cmd {
+  button, select, input[type=number], input[type=text], #cmd {
     font: inherit; color: inherit; background: var(--ui-btn);
     border: 1px solid var(--ui-border); border-radius: 4px; padding: 4px 9px;
   }
   button { cursor: pointer; }
-  button.on { background: var(--ui-active); border-color: var(--ui-active); color: #fff; }
+  button:disabled { cursor: default; opacity: 0.45; }
+  button.on { background: var(--ui-active); border-color: var(--ui-active); color: var(--ui-on); }
+  :focus-visible { outline: 2px solid var(--ui-active); outline-offset: 1px; }
   select { padding: 4px 2px; }
+  input[type=color] { width: 36px; height: 28px; padding: 2px; border: 1px solid var(--ui-border); border-radius: 4px; background: var(--ui-btn); cursor: pointer; }
+  input[type=checkbox], input[type=radio] { accent-color: var(--ui-active); }
   #oGridStep { width: 62px; padding: 4px 4px 4px 6px; }
+  #layerSel { width: 140px; }
+  #layerLbl { min-width: 6em; justify-content: flex-end; }     /* feste Breiten: die Leiste springt nicht, wenn sich Layer oder Auswahl ändern */
+  .sw, .lprev { flex: none; }
   #wrap { flex: 1; position: relative; min-height: 0; }
   #cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
   #prompt { flex: 1 1 320px; white-space: pre-wrap; }
   #cmd { width: 120px; }
   #coords { color: var(--ui-muted); white-space: pre; font-variant-numeric: tabular-nums; }
-  #help { position: absolute; top: 8px; right: 8px; width: min(440px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow: auto;
-          background: var(--ui-bg); border: 1px solid var(--ui-border); border-radius: 6px; padding: 4px 14px 10px; }
+  .panel { position: absolute; top: 8px; max-height: calc(100% - 16px); overflow: auto; background: var(--ui-bg);
+           border: 1px solid var(--ui-border); border-radius: 6px; padding: 0 14px 10px; box-shadow: 0 6px 24px var(--ui-shadow); }
+  .phead { display: flex; align-items: center; gap: 8px; padding: 8px 0; }
+  .phead h2 { flex: 1; margin: 0; font-size: 14px; }
+  .x { padding: 2px 9px; font-size: 16px; line-height: 1.2; }
+  #help { right: max(8px, env(safe-area-inset-right, 0px)); width: min(460px, calc(100% - 16px)); }
   #help h3 { margin: 10px 0 2px; font-size: 13px; }
   #help p { margin: 0 0 4px; }
   #help code { background: var(--ui-btn); border: 1px solid var(--ui-border); border-radius: 3px; padding: 0 3px; }
+  #layers { left: max(8px, env(safe-area-inset-left, 0px)); width: min(880px, calc(100% - 16px)); }
+  .lrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px; border-top: 1px solid var(--ui-border); }
+  .lrow.cur { background: var(--ui-cur); }
+  .lrow.off .lname { color: var(--ui-muted); }
+  .lname { flex: 1 1 120px; min-width: 0; }
+  .lon { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+  .lsel { font-variant-numeric: tabular-nums; }
+  .ldel.armed { background: var(--ui-warn); border-color: var(--ui-warn); color: var(--ui-on); }
+  #layerHint { margin: 8px 0 0; color: var(--ui-muted); max-width: 75ch; }
+  #note { position: absolute; left: max(8px, env(safe-area-inset-left, 0px)); bottom: 8px; max-width: calc(100% - 16px);
+          display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 8px 6px 12px;
+          background: var(--ui-bg); border: 1px solid var(--ui-border); border-radius: 6px; box-shadow: 0 4px 16px var(--ui-shadow); }
   #printimg { display: none; }
   @media print {
     @page { margin: 10mm; }
@@ -58,23 +95,30 @@
 
 <div id="bar">
   <span class="grp">
-    <button data-tool="select" title="Auswahl (A)">Auswahl</button>
-    <button data-tool="line" title="Linie (L)">Linie</button>
-    <button data-tool="rect" title="Rechteck (R)">Rechteck</button>
-    <button data-tool="dim" title="Bemaßung (B)">Bemaßung</button>
+    <button type="button" data-tool="select" title="Auswahl (A)">Auswahl</button>
+    <button type="button" data-tool="line" title="Linie (L)">Linie</button>
+    <button type="button" data-tool="rect" title="Rechteck (R)">Rechteck</button>
+    <button type="button" data-tool="dim" title="Bemaßung (B)">Bemaßung</button>
   </span>
   <span class="grp">
-    <button data-tool="move" title="Ausgewählte Elemente verschieben (M)">Verschieben</button>
-    <button data-tool="copy" title="Ausgewählte Elemente kopieren (K)">Kopieren</button>
-    <button data-tool="offset" title="Linie parallel in festem Abstand kopieren (V)">Versetzen</button>
-    <button data-tool="trim" title="Überstand bis zur nächsten Kreuzung entfernen (T)">Stutzen</button>
-    <button data-tool="corner" title="Zwei Linien zu einer sauberen Ecke kürzen/verlängern (E)">Ecke</button>
+    <button type="button" data-tool="move" title="Ausgewählte Elemente verschieben (M)">Verschieben</button>
+    <button type="button" data-tool="copy" title="Ausgewählte Elemente kopieren (K)">Kopieren</button>
+    <button type="button" data-tool="offset" title="Linie parallel in festem Abstand kopieren (V)">Versetzen</button>
+    <button type="button" data-tool="trim" title="Überstand bis zur nächsten Kreuzung entfernen (T)">Stutzen</button>
+    <button type="button" data-tool="corner" title="Zwei Linien zu einer sauberen Ecke kürzen/verlängern (E)">Ecke</button>
   </span>
   <span class="grp">
-    <button id="undo" title="Rückgängig (Strg+Z)">↶</button>
-    <button id="redo" title="Wiederholen (Strg+Y)">↷</button>
-    <button id="del" title="Auswahl löschen (Entf)">Löschen</button>
-    <button id="fit" title="Ganze Zeichnung zeigen">Alles zeigen</button>
+    <button type="button" id="undo" title="Rückgängig (Strg+Z)" aria-label="Rückgängig">↶</button>
+    <button type="button" id="redo" title="Wiederholen (Strg+Y)" aria-label="Wiederholen">↷</button>
+    <button type="button" id="del" title="Auswahl löschen (Entf)">Löschen</button>
+    <button type="button" id="fit" title="Ganze Zeichnung zeigen">Alles zeigen</button>
+    <button type="button" id="helpBtn" title="Kurzanleitung" aria-label="Kurzanleitung">?</button>
+  </span>
+  <span class="grp">
+    <label for="layerSel" id="layerLbl">Layer</label>
+    <svg id="layerSw" class="sw" width="36" height="14" aria-hidden="true"></svg>
+    <select id="layerSel" title="Aktueller Layer für neue Linien. Sind Elemente ausgewählt, kommen sie auf den gewählten Layer."></select>
+    <button type="button" id="layersBtn" title="Layer anlegen und benennen, Farbe, Linienart und Stärke festlegen">Layer verwalten</button>
   </span>
   <span class="grp">
     <label title="Linien rasten auf feste Winkel ein (F8)"><input type="checkbox" id="oAng"> Winkelfang</label>
@@ -84,25 +128,44 @@
     <input type="number" id="oGridStep" min="0.001" step="any" title="Rasterweite in mm"> mm
   </span>
   <span class="grp">
-    <button id="new" title="Zeichnung leeren">Neu</button>
-    <button id="open" title="Gespeicherte Zeichnung (.json) öffnen">Öffnen</button>
-    <button id="save" title="Zeichnung als Datei speichern (Strg+S)">Speichern</button>
-    <button id="png" title="Als Bild exportieren">PNG</button>
-    <button id="dxf" title="Für AutoCAD &amp; Co. exportieren">DXF</button>
-    <button id="print">Drucken</button>
-    <button id="helpBtn" title="Kurzanleitung">?</button>
+    <button type="button" id="new" title="Zeichnung leeren, Layer bleiben erhalten">Neu</button>
+    <button type="button" id="open" title="Gespeicherte Zeichnung (.json) öffnen">Öffnen</button>
+    <button type="button" id="save" title="Zeichnung als Datei speichern (Strg+S)">Speichern</button>
+    <button type="button" id="png" title="Als Bild exportieren">PNG</button>
+    <button type="button" id="dxf" title="Für AutoCAD &amp; Co. exportieren">DXF</button>
+    <button type="button" id="print">Drucken</button>
   </span>
 </div>
 
 <div id="wrap">
   <canvas id="cv"></canvas>
-  <div id="help" hidden>
+
+  <div id="layers" class="panel" hidden>
+    <div class="phead">
+      <h2>Layer</h2>
+      <button type="button" id="addLayer">+ Neuer Layer</button>
+      <button type="button" id="closeLayers" class="x" title="Schließen (Esc)" aria-label="Schließen">×</button>
+    </div>
+    <div id="layerRows"></div>
+    <p id="layerHint"></p>
+  </div>
+
+  <div id="help" class="panel" hidden>
+    <div class="phead">
+      <h2>Kurzanleitung</h2>
+      <button type="button" id="closeHelp" class="x" title="Schließen (Esc)" aria-label="Schließen">×</button>
+    </div>
     <h3>Linie (L)</h3>
     <p>Startpunkt anklicken, Maus grob in die gewünschte Richtung bewegen, <b>Länge in mm tippen</b> und Enter drücken.
        Die Linie rastet auf 0°, 45°, 90° … ein. Danach einfach die nächste Länge tippen.
        Esc, Enter oder Rechtsklick beendet den Linienzug, <code>C</code> schließt ihn.</p>
     <p>Weitere Eingaben: <code>100&lt;30</code> Länge und Winkel · <code>@50;20</code> relativ (dx;dy) · <code>120;80</code> absolut (x;y).
        Dezimalkomma oder -punkt geht beides.</p>
+    <h3>Layer</h3>
+    <p>Ein Layer ist eine benannte Linienart mit Farbe, Strichart (durchgehend, gestrichelt, gepunktet, Strich-Punkt …) und Stärke,
+       zum Beispiel „Wand“ dick und schwarz, „Korpus“ blau. Unter <b>Layer verwalten</b> anlegen und benennen.
+       Neue Linien landen auf dem Layer, der oben gewählt ist. Um vorhandene Linien umzustellen, sie auswählen und oben einen anderen Layer wählen.
+       „sichtbar“ blendet einen Layer aus. Bemaßungen kommen automatisch auf den Layer „Bemaßung“.</p>
     <h3>Rechteck (R)</h3>
     <p>Erste Ecke anklicken, dann <code>Breite;Höhe</code> tippen + Enter – oder die zweite Ecke anklicken.</p>
     <h3>Bemaßung (B)</h3>
@@ -114,16 +177,22 @@
     <p>Elemente auswählen, Befehl wählen, Basispunkt anklicken, dann Zielpunkt anklicken – oder Richtung zeigen, <b>Abstand tippen</b> und Enter.
        Kopieren legt weitere Kopien ab, bis Esc gedrückt wird.</p>
     <h3>Versetzen (V)</h3>
-    <p>Linie anklicken, Maus auf die gewünschte Seite bewegen, Abstand tippen + Enter: erzeugt eine parallele Kopie.
+    <p>Linie anklicken, Maus auf die gewünschte Seite bewegen, Abstand tippen + Enter: erzeugt eine parallele Kopie auf demselben Layer.
        Der Abstand bleibt gemerkt – bei der nächsten Linie genügt ein Klick auf die Seite.</p>
     <h3>Stutzen (T) · Ecke (E)</h3>
     <p>Stutzen: den Überstand anklicken – er wird bis zur nächsten Kreuzung entfernt.
        Ecke: zwei Linien anklicken (jeweils auf dem Teil, der bleiben soll) – beide werden zu einer sauberen Ecke gekürzt oder verlängert.</p>
     <h3>Fang</h3>
     <p>□ Endpunkt · △ Mittelpunkt · ✕ Schnittpunkt · gepunktete Linie = fluchtet mit einem Endpunkt.
-       F3 Objektfang, F8 Winkelfang, F9 Rasterfang.</p>
+       F3 Objektfang, F8 Winkelfang, F9 Rasterfang. Ausgeblendete Layer werden nicht gefangen.</p>
     <h3>Ansicht</h3>
     <p>Mausrad = Zoom · mittlere oder rechte Maustaste ziehen (oder Leertaste + ziehen) = verschieben · Strg+Z / Strg+Y = rückgängig / wiederholen.</p>
+  </div>
+
+  <div id="note" hidden>
+    <span>Beispiel: Nische mit Korpus. Wand, Korpus und Mittellinie liegen auf eigenen Layern.</span>
+    <button type="button" id="noteClear">Leeres Blatt</button>
+    <button type="button" id="noteClose" class="x" title="Hinweis schließen" aria-label="Hinweis schließen">×</button>
   </div>
 </div>
 
@@ -131,7 +200,7 @@
   <span id="prompt"></span>
   <span class="grp">
     <input id="cmd" autocomplete="off" spellcheck="false" placeholder="Länge / Wert" title="Wert eingeben und Enter drücken">
-    <button id="ok" title="Eingabe bestätigen bzw. Befehl beenden (Enter)">↵</button>
+    <button type="button" id="ok" title="Eingabe bestätigen bzw. Befehl beenden (Enter)" aria-label="Eingabe bestätigen">↵</button>
   </span>
   <span id="coords"></span>
 </div>
@@ -141,29 +210,44 @@
 
 <script>
 'use strict';
+document.documentElement.lang = 'de';
 const $ = id => document.getElementById(id);
 const cv = $('cv'), ctx = cv.getContext('2d'), cmd = $('cmd');
 
 // ---------- Zustand (alle Maße in mm, Y-Achse zeigt nach oben, Winkel gegen den Uhrzeigersinn) ----------
-let ents = [];        // {id,t:'line',x1,y1,x2,y2} oder {id,t:'dim',x1,y1,x2,y2,px,py,mode:'a'|'h'|'v'}
+let ents = [];        // {id,t:'line',l,x1,y1,x2,y2} oder {id,t:'dim',l,x1,y1,x2,y2,px,py,mode:'a'|'h'|'v'}; l = Layer
 let nextId = 1;
+let layers = [];      // {id,name,color,type,width,on,dims?}; dims = Layer, auf dem neue Bemaßungen landen
+let curLayer = 1;     // Layer für neue Linien und Rechtecke
 const sel = new Set();
 let tool = 'line';
 let view = { s: 3, ox: 80, oy: 400 };            // Bildschirm = (ox + x*s, oy - y*s)
-const mouse = { x: 0, y: 0 };
+const mouse = { x: 0, y: 0, in: false };
 let cur = { x: 0, y: 0, snap: null };            // Zeigerposition nach dem Fang
 let chain = [];       // Linie: Punkte des laufenden Linienzugs
 let pts = [];         // Rechteck/Bemaßung/Verschieben/Kopieren: bereits gesetzte Punkte
 let selecting = false;                           // Verschieben/Kopieren: erst noch Elemente auswählen
 let first = null;                                // Versetzen/Ecke: zuerst angeklickte Linie {id, x, y}
 let offDist = 0;                                 // zuletzt benutzter Abstand beim Versetzen
+let hoverId = 0;                                 // Element unter dem Zeiger (beim Auswählen)
 let lastDir = 0, drag = null, spaceDown = false, lastMid = 0, raf = 0, flashMsg = '', flashTimer = 0;
 let undoStack = [], redoStack = [];
+const touches = new Map();
+let pinch = null, gesture = false;
 const opt = { ang: true, step: 45, osnap: true, grid: true, gridStep: 1 };
 const APERTURE = 10;                                              // Fangradius in Pixeln
 const DIM = { arrow: 9, gap: 3, over: 5, text: 12, textGap: 4 };  // Bemaßungsgrößen in Pixeln
 const KEY = 'minicad.v1';
 const C = {};                                                     // Farben der Zeichenfläche (aus dem CSS)
+const LTYPES = {                             // Linienarten; Strichmuster in Pixeln (für Stärken bis 1,5 px)
+  solid:    { name: 'durchgehend',      dash: [],                       dxf: 'CONTINUOUS', desc: 'Solid line' },
+  dashed:   { name: 'gestrichelt',      dash: [10, 5],                  dxf: 'DASHED',     desc: '__ __ __' },
+  dotted:   { name: 'gepunktet',        dash: [0.01, 4.5],              dxf: 'DOT',        desc: '. . . .' },
+  dashdot:  { name: 'Strich-Punkt',     dash: [14, 5, 0.01, 5],         dxf: 'DASHDOT',    desc: '__ . __ .' },
+  dashdot2: { name: 'Strich-Zweipunkt', dash: [14, 5, 0.01, 5, 0.01, 5], dxf: 'DIVIDE',    desc: '__ . . __ . .' },
+};
+const WIDTHS = [[1, 'dünn'], [1.5, 'normal'], [2.5, 'dick'], [4, 'sehr dick']];
+const PALETTE = ['#1971c2', '#c2255c', '#e8590c', '#6741d9', '#0c8599', '#2b8a3e', '#8a5a44', '#495057'];
 
 // ---------- Hilfsfunktionen ----------
 const w2s = (x, y, v = view) => [v.ox + x * v.s, v.oy - y * v.s];
@@ -173,6 +257,7 @@ const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
 const same = (a, b) => Math.abs(a.x - b.x) < 1e-7 && Math.abs(a.y - b.y) < 1e-7;
 const angleDeg = (a, b) => (Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI + 360) % 360;
 const num = s => /^[+-]?(\d+([.,]\d*)?|[.,]\d+)$/.test(s = s.trim()) ? parseFloat(s.replace(',', '.')) : NaN;
+const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const byId = id => ents.find(e => e.id === id);
 const moving = () => tool === 'move' || tool === 'copy';
 const boxMode = () => tool === 'select' || selecting;                                        // Klick/Fenster wählt Elemente aus
@@ -218,8 +303,57 @@ function gridUnit() {                        // Abstand der feinen Gitterlinien 
 }
 function flash(msg) {
   flashMsg = msg; clearTimeout(flashTimer);
-  flashTimer = setTimeout(() => { flashMsg = ''; status(); }, 3000);
+  flashTimer = setTimeout(() => { flashMsg = ''; status(); }, 3500);
   status();
+}
+
+// ---------- Layer ----------
+const layerById = id => layers.find(l => l.id === id);
+const lay = e => layerById(e.l) || layers[0];
+const isOn = e => lay(e).on;
+const shown = () => ents.filter(isOn);                           // nur Elemente auf sichtbaren Layern
+const dimLayer = () => layers.find(l => l.dims) || layers[0];
+const baseLayer = () => layers.find(l => !l.dims) || layers[0];
+const curName = () => '„' + (layerById(curLayer) || baseLayer()).name + '“';
+function defaultLayers() {
+  return [
+    { id: 1, name: 'Standard', color: '#000000', type: 'solid', width: 1.5, on: true },
+    { id: 2, name: 'Bemaßung', color: '#0b7a43', type: 'solid', width: 1, on: true, dims: true },
+  ];
+}
+function uniqueName(base, skip, list = layers) {
+  let n = base, i = 2;
+  while (list.some(l => l !== skip && l.name.toLowerCase() === n.toLowerCase())) n = base + ' ' + i++;
+  return n;
+}
+function dashFor(l) {                        // Strichmuster, bei dicken Linien mitwachsend
+  const f = Math.max(1, l.width / 1.5);
+  return LTYPES[l.type].dash.map(d => d * f);
+}
+const rgbOf = hex => { const n = parseInt(hex.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; };
+const toHex = c => '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
+function lum(c) {
+  const f = v => (v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+}
+const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+const inkCache = new Map();
+function ink(hex, bg, fg) {                  // Layerfarbe so anpassen, dass sie auf dem Hintergrund sichtbar bleibt
+  const key = hex + bg + fg;
+  let out = inkCache.get(key);
+  if (out) return out;
+  const c = rgbOf(hex), Lb = lum(rgbOf(bg)), dark = Lb < 0.3, hi = Math.max(...c), lo = Math.min(...c);
+  out = hex;
+  if (hi - lo < 16 && (dark ? hi < 48 : lo > 224)) out = fg;     // Schwarz bzw. Weiß tauschen wie AutoCAD-Farbe 7
+  else if (contrast(lum(c), Lb) < 3.5) {
+    for (let k = 1; k <= 10; k++) {          // sonst schrittweise aufhellen bzw. abdunkeln
+      const m = c.map(v => Math.round(v + ((dark ? 255 : 0) - v) * k / 10));
+      out = toHex(m);
+      if (contrast(lum(m), Lb) >= 3.5) break;
+    }
+  }
+  inkCache.set(key, out);
+  return out;
 }
 
 // ---------- Fang ----------
@@ -231,7 +365,7 @@ function findSnap(w, skip) {                 // Objektfang: End-, Mittel- und Sc
     const score = Math.hypot(x - w.x, y - w.y) + prio * r;
     if (score - prio * r <= r && (!best || score < best.score)) best = { x, y, type, score };
   };
-  for (const e of ents) {
+  for (const e of shown()) {
     if (e.t !== 'line' || distSeg(w.x, w.y, e.x1, e.y1, e.x2, e.y2) > r) continue;
     near.push(e);
     cand(e.x1, e.y1, 'end', 0); cand(e.x2, e.y2, 'end', 0);
@@ -266,7 +400,7 @@ function resolve() {                         // Zeigerposition -> Zeichenpunkt (
       if (tt < 1e-7 || d > (hard ? r : r * 0.6)) return;
       if (!best || (hard === best.hard ? d < best.d : hard)) best = { t: tt, type, gx, gy, d, hard };
     };
-    if (opt.osnap) for (const e of ents) {
+    if (opt.osnap) for (const e of shown()) {
       if (e.t !== 'line') continue;
       const ex = e.x2 - e.x1, ey = e.y2 - e.y1, den = dx * ey - dy * ex;
       if (Math.abs(den) > 1e-10 * Math.hypot(ex, ey)) {            // Strahl kreuzt vorhandene Linie
@@ -343,7 +477,12 @@ function applyTyped() {
 }
 
 // ---------- Zeichnen (Befehle) ----------
-const addLine = (a, b) => ents.push({ id: nextId++, t: 'line', x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+function addEnt(e) {                         // neues Element; ein ausgeblendeter Ziel-Layer wird wieder eingeblendet
+  const l = layerById(e.l);
+  if (l && !l.on) { l.on = true; flash('Layer „' + l.name + '“ war ausgeblendet und wird wieder angezeigt.'); }
+  ents.push({ id: nextId++, ...e });
+}
+const addLine = (a, b) => addEnt({ t: 'line', l: curLayer, x1: a.x, y1: a.y, x2: b.x, y2: b.y });
 
 function dimMode(a, b, p) {                  // Art des Maßes je nach Lage des Zeigers
   const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
@@ -353,7 +492,7 @@ function dimMode(a, b, p) {                  // Art des Maßes je nach Lage des 
 }
 function dimEnt(p, mode) {
   const [a, b] = pts;
-  return { t: 'dim', x1: a.x, y1: a.y, x2: b.x, y2: b.y, px: p.x, py: p.y, mode: mode || dimMode(a, b, p) };
+  return { t: 'dim', l: dimLayer().id, x1: a.x, y1: a.y, x2: b.x, y2: b.y, px: p.x, py: p.y, mode: mode || dimMode(a, b, p) };
 }
 function pick(p, mode) {                     // einen Punkt an den aktiven Befehl übergeben
   p = { x: R(p.x), y: R(p.y) };
@@ -375,7 +514,7 @@ function pick(p, mode) {                     // einen Punkt an den aktiven Befeh
   } else if (tool === 'dim') {
     if (pts.length < 2) { if (!pts.length || !same(pts[0], p)) pts.push(p); return; }
     const e = dimEnt(p, mode);
-    change(() => ents.push({ id: nextId++, ...e }));
+    change(() => addEnt(e));
     pts = [];
   } else if (moving()) {
     const a = pts[0];
@@ -394,19 +533,19 @@ function offsetLine() {                      // Parallele zur gewählten Linie a
   if (!e || !(d > 0)) return null;
   const L = Math.hypot(e.x2 - e.x1, e.y2 - e.y1), nx = -(e.y2 - e.y1) / L, ny = (e.x2 - e.x1) / L, w = s2w(mouse.x, mouse.y);
   const s = (w.x - e.x1) * nx + (w.y - e.y1) * ny < 0 ? -d : d;
-  return { d, x1: R(e.x1 + nx * s), y1: R(e.y1 + ny * s), x2: R(e.x2 + nx * s), y2: R(e.y2 + ny * s) };
+  return { d, l: e.l, x1: R(e.x1 + nx * s), y1: R(e.y1 + ny * s), x2: R(e.x2 + nx * s), y2: R(e.y2 + ny * s) };
 }
 function doOffset() {
   const o = offsetLine();
   if (!o) return flash('Erst den Abstand in mm tippen und Enter drücken.');
-  change(() => ents.push({ id: nextId++, t: 'line', x1: o.x1, y1: o.y1, x2: o.x2, y2: o.y2 }));
+  change(() => addEnt({ t: 'line', l: o.l, x1: o.x1, y1: o.y1, x2: o.x2, y2: o.y2 }));
   offDist = o.d; cmd.value = ''; first = null;
 }
 function trimPart(e, w) {                    // Teilstück der Linie e am Punkt w, begrenzt durch die nächsten Kreuzungen
   const dx = e.x2 - e.x1, dy = e.y2 - e.y1, L2 = dx * dx + dy * dy, eps = 1e-7 / Math.sqrt(L2);
   const t0 = ((w.x - e.x1) * dx + (w.y - e.y1) * dy) / L2;
   let lo = 0, hi = 1;
-  for (const o of ents) {
+  for (const o of shown()) {
     if (o === e || o.t !== 'line') continue;
     const p = segInt(e, o);
     if (!p) continue;
@@ -476,6 +615,7 @@ function escape() {
   else if (chain.length || pts.length || first) { chain = []; pts = []; first = null; }
   else if (moving()) return setTool('select');
   else if (sel.size) sel.clear();
+  else if (!$('layers').hidden) $('layers').hidden = true;
   else if (!$('help').hidden) $('help').hidden = true;
   else return setTool('select');
   refresh();
@@ -491,30 +631,47 @@ function setTool(t) {
 }
 
 // ---------- Änderungen, Rückgängig, Speichern ----------
+let pending = null, pendTimer = 0;           // Farbwahl: Zustand vor dem Ziehen im Farbwähler
+let sampleSig = '';                          // Inhalt der Beispielzeichnung, solange ihr Hinweis sichtbar ist
+function snapshot() { return JSON.stringify({ ents, layers }); }
+function pushUndo(s) { undoStack.push(s); if (undoStack.length > 300) undoStack.shift(); redoStack = []; }
+function commitLive() { clearTimeout(pendTimer); if (pending) { pushUndo(pending); pending = null; save(); } }
+function fixState() {                        // Auswahl und Bezüge an geänderte Daten anpassen
+  if (!layerById(curLayer)) curLayer = baseLayer().id;
+  for (const id of [...sel]) { const e = byId(id); if (!e || !isOn(e)) sel.delete(id); }
+  if (first) { const e = byId(first.id); if (!e || !isOn(e)) first = null; }
+}
 function setEnts(list) {
   ents = list; nextId = ents.reduce((m, e) => Math.max(m, e.id), 0) + 1; first = null;
-  for (const id of [...sel]) if (!byId(id)) sel.delete(id);   // Auswahl behalten, soweit es die Elemente noch gibt
+  fixState();
 }
-function save() { try { localStorage.setItem(KEY, JSON.stringify({ ents, opt })); } catch (e) { /* kein Speicher verfügbar */ } }
+function restore(s) { const o = JSON.parse(s); layers = o.layers; setEnts(o.ents); }
+function save() { try { localStorage.setItem(KEY, JSON.stringify({ ents, layers, curLayer, opt })); } catch (e) { /* kein Speicher verfügbar */ } }
 function change(fn) {
-  undoStack.push(JSON.stringify(ents));
-  if (undoStack.length > 300) undoStack.shift();
-  redoStack = [];
-  fn(); save();
+  commitLive();
+  pushUndo(snapshot());
+  fn(); fixState(); save();
+  if (!$('note').hidden && JSON.stringify(ents) !== sampleSig) $('note').hidden = true;   // Hinweis weg, sobald gezeichnet wird
 }
 function undo() {
+  commitLive();
   if (tool === 'line' && chain.length === 1) chain = [];     // nur den Startpunkt zurücknehmen
   else if (undoStack.length) {
-    redoStack.push(JSON.stringify(ents));
-    setEnts(JSON.parse(undoStack.pop()));
-    chain.pop(); pts = []; save();
+    redoStack.push(snapshot());
+    restore(undoStack.pop());
+    if (chain.length > 1) {                  // zurückgenommenes Stück auch aus dem laufenden Linienzug nehmen
+      const a = chain[chain.length - 2], b = chain[chain.length - 1];
+      if (!ents.some(e => e.t === 'line' && same({ x: e.x1, y: e.y1 }, a) && same({ x: e.x2, y: e.y2 }, b))) chain.pop();
+    }
+    pts = []; save();
   }
   refresh();
 }
 function redo() {
+  commitLive();
   if (!redoStack.length) return;
-  undoStack.push(JSON.stringify(ents));
-  setEnts(JSON.parse(redoStack.pop()));
+  undoStack.push(snapshot());
+  restore(redoStack.pop());
   chain = []; pts = []; save(); refresh();
 }
 function delSel() {
@@ -522,29 +679,238 @@ function delSel() {
   change(() => { ents = ents.filter(e => !sel.has(e.id)); });
   sel.clear(); refresh();
 }
-function clean(list) {                       // geladene Daten prüfen
+function clearDrawing() {
+  if (!ents.length) return;
+  change(() => setEnts([]));
+  chain = []; pts = [];
+  zoomFit();
+  flash('Zeichnung geleert, die Layer bleiben erhalten. Strg+Z holt die Zeichnung zurück.');
+}
+function cleanLayers(list) {                 // geladene Layer prüfen; null = keine brauchbaren dabei
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  for (const l of list) {
+    if (!l || !Number.isInteger(l.id) || l.id < 1 || out.some(o => o.id === l.id)) continue;
+    const name = typeof l.name === 'string' ? l.name.trim().replace(/\s+/g, ' ').slice(0, 40) : '';
+    const c = { id: l.id, name: '', color: typeof l.color === 'string' && /^#[0-9a-f]{6}$/i.test(l.color) ? l.color.toLowerCase() : '#000000',
+                type: typeof l.type === 'string' && has(LTYPES, l.type) ? l.type : 'solid',
+                width: WIDTHS.some(w => w[0] === l.width) ? l.width : 1.5, on: l.on !== false };
+    if (l.dims === true && !out.some(o => o.dims)) c.dims = true;
+    c.name = uniqueName(name || 'Layer ' + l.id, c, out);
+    out.push(c);
+  }
+  if (!out.length) return null;
+  if (!out.some(o => o.dims)) out.push({ id: Math.max(...out.map(o => o.id)) + 1, name: uniqueName('Bemaßung', null, out),
+                                         color: '#0b7a43', type: 'solid', width: 1, on: true, dims: true });
+  return out;
+}
+function cleanEnts(list, ls) {               // geladene Elemente prüfen; unbekannte Layer -> Standard bzw. Bemaßung
   const ok = v => typeof v === 'number' && isFinite(v);
+  const base = (ls.find(l => !l.dims) || ls[0]).id, dl = (ls.find(l => l.dims) || ls[0]).id;
   return (Array.isArray(list) ? list : [])
     .filter(e => e && (e.t === 'line' || e.t === 'dim') && [e.x1, e.y1, e.x2, e.y2].every(ok) && (e.t === 'line' || (ok(e.px) && ok(e.py))))
-    .map((e, i) => e.t === 'line'
-      ? { id: i + 1, t: 'line', x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2 }
-      : { id: i + 1, t: 'dim', x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2, px: e.px, py: e.py, mode: e.mode === 'h' || e.mode === 'v' ? e.mode : 'a' });
+    .map((e, i) => {
+      const l = ls.some(o => o.id === e.l) ? e.l : e.t === 'dim' ? dl : base;
+      return e.t === 'line'
+        ? { id: i + 1, t: 'line', l, x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2 }
+        : { id: i + 1, t: 'dim', l, x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2, px: e.px, py: e.py, mode: e.mode === 'h' || e.mode === 'v' ? e.mode : 'a' };
+    });
+}
+function loadSample() {                      // Beispiel für den ersten Start: Nische mit Korpus auf eigenen Layern
+  layers = [
+    { id: 1, name: 'Standard', color: '#000000', type: 'solid', width: 1.5, on: true },
+    { id: 2, name: 'Bemaßung', color: '#0b7a43', type: 'solid', width: 1, on: true, dims: true },
+    { id: 3, name: 'Wand', color: '#000000', type: 'solid', width: 2.5, on: true },
+    { id: 4, name: 'Korpus', color: '#1971c2', type: 'solid', width: 1.5, on: true },
+    { id: 5, name: 'Mittellinie', color: '#c2255c', type: 'dashdot', width: 1, on: true },
+  ];
+  const L = (l, x1, y1, x2, y2) => ({ t: 'line', l, x1, y1, x2, y2 });
+  const D = (x1, y1, x2, y2, px, py, mode) => ({ t: 'dim', l: 2, x1, y1, x2, y2, px, py, mode });
+  setEnts([
+    L(3, 0, 0, 0, 600), L(3, 0, 600, 1200, 600), L(3, 1200, 600, 1200, 0),          // Nische innen 1200 × 600
+    L(3, -150, 0, -150, 750), L(3, -150, 750, 1350, 750), L(3, 1350, 750, 1350, 0),   // Wand außen, 150 mm stark
+    L(3, -150, 0, 0, 0), L(3, 1200, 0, 1350, 0),                                      // Wandenden
+    L(4, 50, 20, 1150, 20), L(4, 1150, 20, 1150, 580), L(4, 1150, 580, 50, 580), L(4, 50, 580, 50, 20),   // Korpus 1100 × 560
+    L(5, 600, -60, 600, 820),                                                         // Mittellinie
+    D(0, 0, 1200, 0, 600, -300, 'h'), D(50, 20, 1150, 20, 600, -170, 'h'),
+    D(1150, 20, 1150, 580, 1500, 300, 'v'), D(-150, 750, 0, 600, -75, 900, 'h'),
+  ].map((e, i) => ({ id: i + 1, ...e })));
+  curLayer = 1;
+  sampleSig = JSON.stringify(ents);
+}
+
+// ---------- Layer verwalten ----------
+let layerSig = '', rowIds = '', armed = 0, armTimer = 0;
+function svgLine(l, w) {                     // kleine Vorschau einer Linienart
+  if (!l) return '';
+  const d = dashFor(l).join(' '), p = l.width / 2 + 2;
+  return '<line x1="' + p + '" y1="7" x2="' + (w - p) + '" y2="7" stroke="' + ink(l.color, C.ui, C.line) + '" stroke-width="' + l.width +
+         '" stroke-linecap="round"' + (d ? ' stroke-dasharray="' + d + '"' : '') + '/>';
+}
+function selInfo() {                         // im Auswahlmodus: der gemeinsame Layer der ausgewählten Elemente (0 = verschiedene)
+  if (tool !== 'select' || !sel.size) return null;
+  const ids = new Set(ents.filter(e => sel.has(e.id)).map(e => e.l));
+  return { one: ids.size === 1 ? [...ids][0] : 0 };
+}
+function syncLayerUI(force) {
+  const counts = new Map();
+  for (const e of ents) counts.set(e.l, (counts.get(e.l) || 0) + 1);
+  const si = selInfo(), showId = si ? si.one : curLayer;
+  const sig = JSON.stringify([layers, curLayer, [...counts], si, armed, C.ui, C.line]);
+  if (!force && sig === layerSig) return;
+  layerSig = sig;
+  const s = $('layerSel');
+  if (document.activeElement !== s) {
+    s.textContent = '';
+    if (!showId) { const o = new Option('– verschiedene –', ''); o.disabled = true; s.add(o); }
+    for (const l of layers) s.add(new Option(l.name + (l.on ? '' : ' (ausgeblendet)'), String(l.id)));
+    s.value = showId ? String(showId) : '';
+  }
+  $('layerLbl').textContent = si ? 'Auswahl auf' : 'Layer';
+  $('layerSw').innerHTML = svgLine(layerById(showId), 36);
+  const ids = layers.map(l => l.id).join();
+  if (ids !== rowIds) { rowIds = ids; buildRows(); }
+  for (const l of layers) updateRow(l, counts.get(l.id) || 0);
+  $('layerHint').textContent = 'Neue Linien und Rechtecke landen auf dem markierten Layer. Bemaßungen landen immer auf „' + dimLayer().name +
+    '“. Vorhandene Linien umstellen: Linien auswählen und oben bei „Auswahl auf“ den Ziel-Layer wählen.';
+}
+function buildRows() {
+  const box = $('layerRows');
+  box.textContent = '';
+  for (const l of layers) {
+    const id = l.id, row = document.createElement('div');
+    row.className = 'lrow'; row.id = 'lrow-' + id;
+    row.innerHTML =
+      '<input type="radio" name="curLayer" id="lcur-' + id + '" class="lcur" title="Aktueller Layer: neue Linien landen hier" aria-label="Aktueller Layer">' +
+      '<input type="text" id="lname-' + id + '" class="lname" maxlength="40" spellcheck="false" autocomplete="off" aria-label="Name des Layers">' +
+      '<input type="color" id="lcolor-' + id + '" class="lcolor" title="Farbe" aria-label="Farbe">' +
+      '<select id="ltype-' + id + '" class="ltype" title="Linienart" aria-label="Linienart">' +
+        Object.keys(LTYPES).map(k => '<option value="' + k + '">' + LTYPES[k].name + '</option>').join('') + '</select>' +
+      '<svg class="lprev" width="56" height="14" aria-hidden="true"></svg>' +
+      '<select id="lwidth-' + id + '" class="lwidth" title="Linienstärke" aria-label="Linienstärke">' +
+        WIDTHS.map(([v, n]) => '<option value="' + v + '">' + n + '</option>').join('') + '</select>' +
+      '<label class="lon" title="Layer ein- oder ausblenden"><input type="checkbox" id="lon-' + id + '"> sichtbar</label>' +
+      '<button type="button" class="lsel" id="lsel-' + id + '" title="Alle Elemente dieses Layers auswählen"></button>' +
+      '<button type="button" class="ldel" id="ldel-' + id + '"></button>';
+    const q = c => row.querySelector(c), name = q('.lname'), col = q('.lcolor');
+    q('.lcur').onchange = () => { curLayer = id; save(); refresh(); };
+    name.onchange = () => renameLayer(id, name);
+    name.onkeydown = ev => { if (ev.key === 'Escape') { const L = layerById(id); if (L) name.value = L.name; } };
+    col.oninput = () => liveColor(id, col.value);
+    col.onchange = () => { liveColor(id, col.value); commitLive(); };
+    q('.ltype').onchange = ev => { setProp(id, 'type', ev.target.value); ev.target.blur(); };
+    q('.lwidth').onchange = ev => { setProp(id, 'width', +ev.target.value); ev.target.blur(); };
+    q('.lon input').onchange = ev => setProp(id, 'on', ev.target.checked);
+    q('.lsel').onclick = () => selectLayer(id);
+    q('.ldel').onclick = () => deleteLayer(id);
+    box.appendChild(row);
+  }
+}
+function updateRow(l, count) {               // Werte einer Zeile nachführen, ohne Eingaben zu stören
+  const row = $('lrow-' + l.id);
+  if (!row) return;
+  const q = c => row.querySelector(c), act = document.activeElement;
+  row.classList.toggle('cur', l.id === curLayer);
+  row.classList.toggle('off', !l.on);
+  q('.lcur').checked = l.id === curLayer;
+  const name = q('.lname'), col = q('.lcolor');
+  if (name !== act && name.value !== l.name) name.value = l.name;
+  if (col !== act && col.value !== l.color) col.value = l.color;
+  q('.ltype').value = l.type;
+  q('.lwidth').value = String(l.width);
+  q('.lon input').checked = l.on;
+  const pv = q('.lprev'), ps = l.color + l.type + l.width + C.ui + C.line;
+  if (pv.dataset.s !== ps) { pv.dataset.s = ps; pv.innerHTML = svgLine(l, 56); }
+  const b = q('.lsel');
+  b.textContent = 'Auswählen (' + count + ')';
+  b.disabled = !count || !l.on;
+  const d = q('.ldel');
+  d.disabled = !!l.dims;
+  d.textContent = armed === l.id ? 'Wirklich löschen?' : 'Löschen';
+  d.classList.toggle('armed', armed === l.id);
+  d.title = l.dims ? 'Auf diesem Layer landen die Bemaßungen, er bleibt deshalb erhalten.'
+    : count ? 'Layer samt ' + count + (count === 1 ? ' Element' : ' Elementen') + ' löschen' : 'Layer löschen';
+}
+function renameLayer(id, input) {
+  const l = layerById(id), n = input.value.trim().replace(/\s+/g, ' ');
+  if (!l) return;
+  if (n === l.name) { input.value = n; return; }
+  if (!n) { input.value = l.name; return flash('Der Name darf nicht leer sein.'); }
+  if (layers.some(o => o !== l && o.name.toLowerCase() === n.toLowerCase())) { input.value = l.name; return flash('Einen Layer „' + n + '“ gibt es schon.'); }
+  change(() => { l.name = n; });
+  refresh();
+}
+function setProp(id, key, val) {
+  const l = layerById(id);
+  if (!l || l[key] === val) return;
+  change(() => { l[key] = val; });
+  refresh();
+}
+function liveColor(id, value) {              // Farbe live zeigen, als ein Rückgängig-Schritt speichern
+  const l = layerById(id);
+  if (!l || !/^#[0-9a-f]{6}$/i.test(value) || l.color === value.toLowerCase()) return;
+  if (!pending) pending = snapshot();
+  l.color = value.toLowerCase();
+  clearTimeout(pendTimer); pendTimer = setTimeout(commitLive, 700);
+  refresh();
+}
+function addLayer() {
+  const id = layers.reduce((m, l) => Math.max(m, l.id), 0) + 1, used = new Set(layers.map(l => l.color));
+  let i = 1;
+  while (layers.some(l => l.name.toLowerCase() === 'layer ' + i)) i++;
+  const color = PALETTE.find(c => !used.has(c)) || PALETTE[id % PALETTE.length];
+  change(() => layers.push({ id, name: 'Layer ' + i, color, type: 'solid', width: 1.5, on: true }));
+  curLayer = id; save();
+  syncLayerUI(true);
+  const inp = $('lname-' + id);
+  if (inp) { inp.focus(); inp.select(); inp.scrollIntoView({ block: 'nearest' }); }
+  flash('Neuer Layer angelegt und als aktueller gesetzt. Namen eintippen und Enter drücken.');
+  refresh();
+}
+function deleteLayer(id) {
+  const l = layerById(id), n = ents.filter(e => e.l === id).length;
+  if (!l || l.dims) return;
+  if (n && armed !== id) {                   // Layer mit Inhalt: zweiter Klick bestätigt
+    armed = id; clearTimeout(armTimer);
+    armTimer = setTimeout(() => { armed = 0; refresh(); }, 4000);
+    return refresh();
+  }
+  armed = 0; clearTimeout(armTimer);
+  change(() => { ents = ents.filter(e => e.l !== id); layers = layers.filter(o => o !== l); });
+  flash(n ? 'Layer „' + l.name + '“ mit ' + n + (n === 1 ? ' Element' : ' Elementen') + ' gelöscht. Strg+Z holt ihn zurück.' : 'Layer „' + l.name + '“ gelöscht.');
+  refresh();
+}
+function selectLayer(id) {
+  const l = layerById(id);
+  if (!l || !l.on) return;
+  setTool('select');
+  sel.clear();
+  for (const e of ents) if (e.l === id) sel.add(e.id);
+  $('layers').hidden = true;
+  flash(sel.size + (sel.size === 1 ? ' Element' : ' Elemente') + ' auf „' + l.name + '“ ausgewählt · M verschieben · K kopieren · Entf löscht');
+  refresh();
+}
+function togglePanel(id) {
+  const p = $(id), open = p.hidden;
+  $('layers').hidden = $('help').hidden = true;
+  p.hidden = !open;
+  if (open && id === 'layers') syncLayerUI(true);
 }
 
 // ---------- Auswahl ----------
 function hit(sx, sy, only, skip) {           // Element unter dem Zeiger
   const w = s2w(sx, sy), k = 1 / view.s;
-  let best = null, bd = 6 * k;
-  for (const e of ents) {
+  let best = null, bd = Infinity;
+  for (const e of shown()) {
     if ((only && e.t !== only) || e.id === skip) continue;
-    let d;
-    if (e.t === 'line') d = distSeg(w.x, w.y, e.x1, e.y1, e.x2, e.y2);
+    let d, tol = 6;
+    if (e.t === 'line') { d = distSeg(w.x, w.y, e.x1, e.y1, e.x2, e.y2); tol += lay(e).width / 2; }
     else {
       const g = dimGeom(e, k);
       d = Math.max(0, Math.hypot(w.x - g.tx, w.y - g.ty) - 8 * k);
       for (const l of g.lines) d = Math.min(d, distSeg(w.x, w.y, ...l));
     }
-    if (d <= bd) { bd = d; best = e; }
+    if (d <= tol * k && d <= bd) { bd = d; best = e; }
   }
   return best;
 }
@@ -559,7 +925,7 @@ function endBox() {
   const a = s2w(Math.min(x0, x1), Math.max(y0, y1)), b = s2w(Math.max(x0, x1), Math.min(y0, y1));
   const inside = (x, y) => x >= a.x && x <= b.x && y >= a.y && y <= b.y, crossing = x1 < x0;
   const edges = [[a.x, a.y, b.x, a.y], [b.x, a.y, b.x, b.y], [b.x, b.y, a.x, b.y], [a.x, b.y, a.x, a.y]].map(([x1, y1, x2, y2]) => ({ x1, y1, x2, y2 }));
-  for (const e of ents) {
+  for (const e of shown()) {
     let s = e;
     if (e.t === 'dim') { const g = dimGeom(e, 1 / view.s); s = { x1: g.p1[0], y1: g.p1[1], x2: g.p2[0], y2: g.p2[1] }; }
     const i1 = inside(s.x1, s.y1), i2 = inside(s.x2, s.y2);
@@ -616,13 +982,34 @@ function drawDim(c, v, e, color) {
   c.fillText(g.text, 0, 0);
   c.restore();
 }
-function drawEnts(c, v, col, live) {
-  c.lineCap = 'round';
-  for (const e of ents) {
-    const s = live && sel.has(e.id);
-    if (e.t === 'dim') { drawDim(c, v, e, s ? col.sel : col.dim); continue; }
-    c.strokeStyle = s ? col.sel : col.line; c.lineWidth = s ? 2.5 : 1.5;
-    c.beginPath(); c.moveTo(...w2s(e.x1, e.y1, v)); c.lineTo(...w2s(e.x2, e.y2, v)); c.stroke();
+function lineStyle(c, l, color) { c.strokeStyle = color; c.lineWidth = l.width; c.setLineDash(dashFor(l)); }
+function seg(c, v, e) { c.beginPath(); c.moveTo(...w2s(e.x1, e.y1, v)); c.lineTo(...w2s(e.x2, e.y2, v)); c.stroke(); }
+function drawEnts(c, v, bg, fg, live) {      // live = Bildschirm mit Auswahl; sonst Export
+  const list = shown();
+  c.lineCap = 'round'; c.lineJoin = 'round';
+  if (live) {                                // Saum unter ausgewählten Linien und der Linie unter dem Zeiger
+    c.save(); c.setLineDash([]);
+    for (const e of list) {
+      if (e.t !== 'line' || !(sel.has(e.id) || e.id === hoverId)) continue;
+      const s = sel.has(e.id);
+      c.strokeStyle = s ? C.sel : C.prev; c.globalAlpha = s ? 0.35 : 0.25; c.lineWidth = lay(e).width + 7;
+      seg(c, v, e);
+    }
+    c.restore();
+  }
+  for (const e of list) if (e.t === 'line') { const l = lay(e); lineStyle(c, l, ink(l.color, bg, fg)); seg(c, v, e); }
+  c.setLineDash([]);
+  for (const e of list) {
+    if (e.t !== 'dim') continue;
+    const col = live && sel.has(e.id) ? C.sel : live && e.id === hoverId ? C.prev : ink(lay(e).color, bg, fg);
+    drawDim(c, v, e, col);
+  }
+  if (live && sel.size && sel.size <= 400) { // Griffe an den Linienenden
+    c.fillStyle = C.prev;
+    for (const e of list) {
+      if (e.t !== 'line' || !sel.has(e.id)) continue;
+      for (const [x, y] of [[e.x1, e.y1], [e.x2, e.y2]]) { const [sx, sy] = w2s(x, y, v); c.fillRect(sx - 3, sy - 3, 6, 6); }
+    }
   }
 }
 function drawGrid(W, H) {
@@ -655,26 +1042,29 @@ function strokeLine(e, color, width, dash) {
 }
 function drawPreview() {
   const T = target(), [tx, ty] = w2s(T.x, T.y), w = s2w(mouse.x, mouse.y);
+  const cl = layerById(curLayer) || baseLayer(), inkOf = l => ink(l.color, C.bg, C.line);
   ctx.strokeStyle = C.prev; ctx.lineWidth = 1.5; ctx.setLineDash([]);
-  if (tool === 'line' && chain.length) {
+  if (tool === 'line' && chain.length) {                     // Vorschau in der Linienart des aktuellen Layers
     const a = chain[chain.length - 1];
-    ctx.beginPath(); ctx.moveTo(...w2s(a.x, a.y)); ctx.lineTo(tx, ty); ctx.stroke();
+    lineStyle(ctx, cl, inkOf(cl)); seg(ctx, view, { x1: a.x, y1: a.y, x2: T.x, y2: T.y }); ctx.setLineDash([]);
     if (dist(a, T) > 1e-9) label(fmt(dist(a, T)) + ' mm   ' + fmt(angleDeg(a, T), 1) + '°');
   } else if (tool === 'rect' && pts.length) {
     const [ax, ay] = w2s(pts[0].x, pts[0].y);
-    ctx.strokeRect(ax, ay, tx - ax, ty - ay);
+    lineStyle(ctx, cl, inkOf(cl)); ctx.strokeRect(ax, ay, tx - ax, ty - ay); ctx.setLineDash([]);
     label(fmt(Math.abs(T.x - pts[0].x)) + ' × ' + fmt(Math.abs(T.y - pts[0].y)) + ' mm');
   } else if (tool === 'dim' && pts.length === 1) {
     ctx.setLineDash([4, 4]);
     ctx.beginPath(); ctx.moveTo(...w2s(pts[0].x, pts[0].y)); ctx.lineTo(tx, ty); ctx.stroke();
-  } else if (tool === 'dim' && pts.length === 2) drawDim(ctx, view, dimEnt(T, T.mode), C.prev);
+  } else if (tool === 'dim' && pts.length === 2) drawDim(ctx, view, dimEnt(T, T.mode), inkOf(dimLayer()));
   else if (moving() && pts.length) {                         // Auswahl an der neuen Stelle
     const a = pts[0], dx = T.x - a.x, dy = T.y - a.y;
-    for (const e of ents) {
+    ctx.save(); ctx.globalAlpha = 0.7;
+    for (const e of shown()) {
       if (!sel.has(e.id)) continue;
-      const c = shiftEnt({ ...e }, dx, dy);
-      if (c.t === 'dim') drawDim(ctx, view, c, C.prev); else strokeLine(c, C.prev, 1.5);
+      const c = shiftEnt({ ...e }, dx, dy), l = lay(e);
+      if (c.t === 'dim') drawDim(ctx, view, c, inkOf(l)); else { lineStyle(ctx, l, inkOf(l)); seg(ctx, view, c); }
     }
+    ctx.restore(); ctx.setLineDash([]);
     strokeLine({ x1: a.x, y1: a.y, x2: T.x, y2: T.y }, C.prev, 1, [4, 4]);
     if (dist(a, T) > 1e-9) label(fmt(dist(a, T)) + ' mm   ' + fmt(angleDeg(a, T), 1) + '°');
   } else if (tool === 'trim') {                              // Teilstück, das entfernt würde
@@ -686,10 +1076,10 @@ function drawPreview() {
     if (r) r.forEach(l => strokeLine(l, C.prev, 2.5));       // Ergebnis der Ecke
     else if (f) strokeLine(f, C.prev, 2.5);                  // gewählte Linie
     else if (e) strokeLine(e, C.prev, 2.5);                  // Linie unter dem Zeiger
-    if (o) { strokeLine(o, C.prev, 1.5); label('Abstand ' + fmt(o.d) + ' mm'); }
+    if (o) { const l = lay(f); lineStyle(ctx, l, inkOf(l)); seg(ctx, view, o); ctx.setLineDash([]); label('Abstand ' + fmt(o.d) + ' mm'); }
   }
   if (drag && drag.type === 'box') {                         // Auswahlfenster
-    ctx.setLineDash(mouse.x < drag.x0 ? [5, 4] : []); ctx.lineWidth = 1;
+    ctx.strokeStyle = C.prev; ctx.setLineDash(mouse.x < drag.x0 ? [5, 4] : []); ctx.lineWidth = 1;
     ctx.strokeRect(drag.x0 + 0.5, drag.y0 + 0.5, mouse.x - drag.x0, mouse.y - drag.y0);
   }
   if (freePick() || T !== cur) return;
@@ -710,11 +1100,13 @@ function drawPreview() {
 }
 function draw() {
   const W = cv.clientWidth, H = cv.clientHeight, dpr = window.devicePixelRatio || 1;
+  const h = mouse.in && boxMode() && !drag && !gesture && hit(mouse.x, mouse.y);
+  hoverId = h ? h.id : 0;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.setLineDash([]);
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
   ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
   drawGrid(W, H);
-  drawEnts(ctx, view, C, true);
+  drawEnts(ctx, view, C.bg, C.line, true);
   drawPreview();
 }
 function status() {
@@ -724,8 +1116,9 @@ function status() {
     const one = sel.size === 1 && ents.find(e => sel.has(e.id));
     if (one && one.t === 'line') {
       const a = { x: one.x1, y: one.y1 }, b = { x: one.x2, y: one.y2 };
-      p = 'Linie: Länge ' + fmt(dist(a, b)) + ' mm, Winkel ' + fmt(angleDeg(a, b), 1) + '° · Entf löscht';
-    } else p = sel.size ? sel.size + (sel.size === 1 ? ' Element' : ' Elemente') + ' ausgewählt · M verschieben · K kopieren · Entf löscht' : 'AUSWAHL: Element anklicken oder Fenster aufziehen';
+      p = 'Linie auf „' + lay(one).name + '“: Länge ' + fmt(dist(a, b)) + ' mm, Winkel ' + fmt(angleDeg(a, b), 1) + '° · oben anderen Layer wählen · Entf löscht';
+    } else p = sel.size ? sel.size + (sel.size === 1 ? ' Element' : ' Elemente') + ' ausgewählt · oben anderen Layer wählen · M verschieben · K kopieren · Entf löscht'
+      : 'AUSWAHL: Element anklicken oder Fenster aufziehen';
   }
   else if (moving()) {
     const n = tool === 'move' ? 'VERSCHIEBEN: ' : 'KOPIEREN: ', cnt = sel.size + (sel.size === 1 ? ' Element' : ' Elemente');
@@ -738,8 +1131,8 @@ function status() {
     : 'VERSETZEN: Abstand in mm tippen + Enter – die Lage des Zeigers bestimmt die Seite';
   else if (tool === 'trim') p = 'STUTZEN: den Überstand anklicken, der entfernt werden soll';
   else if (tool === 'corner') p = first ? 'ECKE: zweite Linie anklicken' : 'ECKE: erste Linie anklicken – jeweils auf dem Teil, der bleiben soll';
-  else if (tool === 'line') p = chain.length ? 'LINIE: Länge in mm tippen + Enter (Richtung = Lage des Zeigers) oder nächsten Punkt anklicken · Esc beendet' : 'LINIE: Startpunkt anklicken';
-  else if (tool === 'rect') p = pts.length ? 'RECHTECK: Breite;Höhe tippen + Enter oder zweite Ecke anklicken' : 'RECHTECK: erste Ecke anklicken';
+  else if (tool === 'line') p = 'LINIE auf ' + curName() + ': ' + (chain.length ? 'Länge in mm tippen + Enter (Richtung = Lage des Zeigers) oder nächsten Punkt anklicken · Esc beendet' : 'Startpunkt anklicken');
+  else if (tool === 'rect') p = 'RECHTECK auf ' + curName() + ': ' + (pts.length ? 'Breite;Höhe tippen + Enter oder zweite Ecke anklicken' : 'erste Ecke anklicken');
   else p = ['BEMASSUNG: ersten Messpunkt oder direkt eine Linie anklicken', 'BEMASSUNG: zweiten Messpunkt anklicken', 'BEMASSUNG: Lage der Maßlinie anklicken (oder Abstand tippen + Enter)'][pts.length];
   $('prompt').textContent = p;
   $('coords').textContent = 'X ' + fmt(cur.x) + '   Y ' + fmt(cur.y) + '   ·   Gitter ' + fmt(gridUnit(), 3) + ' mm';
@@ -748,6 +1141,7 @@ function refresh() {
   if (moving() && !sel.size && !selecting) { selecting = true; pts = []; }   // Auswahl ging verloren (z. B. Rückgängig)
   cur = resolve();
   status();
+  syncLayerUI();
   if (!raf) raf = requestAnimationFrame(() => { raf = 0; draw(); });
 }
 
@@ -756,17 +1150,17 @@ function zoomAt(sx, sy, f) {
   const s = Math.min(5000, Math.max(0.002, view.s * f));
   view.ox = sx - (sx - view.ox) * s / view.s; view.oy = sy - (sy - view.oy) * s / view.s; view.s = s;
 }
-function extents() {
+function extents(list) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   const add = (x, y) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); };
-  for (const e of ents) {
+  for (const e of list) {
     add(e.x1, e.y1); add(e.x2, e.y2);
     if (e.t === 'dim') { const g = dimGeom(e, 0); add(...g.p1); add(...g.p2); }
   }
-  return ents.length ? { x0, y0, x1, y1 } : null;
+  return list.length ? { x0, y0, x1, y1 } : null;
 }
 function zoomFit() {
-  const b = extents(), W = cv.clientWidth, H = cv.clientHeight, m = 60;
+  const b = extents(shown()), W = cv.clientWidth, H = cv.clientHeight, m = 60;
   if (!b) view = { s: 3, ox: 80, oy: H - 80 };
   else {
     const s = Math.max(0.002, Math.min(50, (W - 2 * m) / Math.max(b.x1 - b.x0, 1e-6), (H - 2 * m) / Math.max(b.y1 - b.y0, 1e-6)));
@@ -776,31 +1170,42 @@ function zoomFit() {
 }
 
 // ---------- Datei, Export, Druck ----------
-function download(name, data, type) {
+const inViewer = !!(window.claude && typeof window.claude.use === 'function');   // als Artifact in claude.ai geöffnet
+let saver = null;                            // dort laufen Downloads über den Viewer
+async function download(name, data, type) {
+  if (inViewer) {
+    if (!saver) return flash('Dateien können hier nicht gespeichert werden.');
+    try { await saver.save({ filename: name, data }); flash('„' + name + '“ gespeichert.'); }
+    catch (e) {
+      const c = e && e.code;
+      flash(c === 'declined' ? 'Speichern abgebrochen.' : c === 'rate_limited' ? 'Bitte einen Moment warten und dann noch einmal versuchen.' : 'Speichern ist hier gerade nicht möglich.');
+    }
+    return;
+  }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type }));
   a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
-function paperView() {                       // Ansicht, bei der die ganze Zeichnung auf ein Blatt (max. 1600 px) passt
-  const b = extents();
-  if (!b) { flash('Die Zeichnung ist noch leer.'); return null; }
+function paperView(list) {                   // Ansicht, bei der die Elemente auf ein Blatt (max. 1600 px) passen
+  const b = extents(list);
+  if (!b) { flash(ents.length ? 'Alle Layer sind ausgeblendet.' : 'Die Zeichnung ist noch leer.'); return null; }
   const m = 50, s = (1600 - 2 * m) / Math.max(b.x1 - b.x0, b.y1 - b.y0, 1e-6);
   const W = Math.ceil((b.x1 - b.x0) * s + 2 * m), H = Math.ceil((b.y1 - b.y0) * s + 2 * m);
   return { s, ox: m - b.x0 * s, oy: H - m + b.y0 * s, W, H };
 }
-function renderImage(scale) {                // Zeichnung schwarz auf weiß in ein eigenes Canvas zeichnen
-  const v = paperView();
+function renderImage(scale) {                // sichtbare Layer in ihren Farben auf weißem Blatt
+  const v = paperView(shown());
   if (!v) return null;
   const c = document.createElement('canvas');
   c.width = v.W * scale; c.height = v.H * scale;
   const g = c.getContext('2d');
   g.scale(scale, scale); g.fillStyle = '#fff'; g.fillRect(0, 0, v.W, v.H);
-  drawEnts(g, v, { line: '#000', dim: '#000' }, false);
+  drawEnts(g, v, '#ffffff', '#000000', false);
   return c;
 }
-function exportPNG() { const c = renderImage(2); if (c) c.toBlob(b => download('zeichnung.png', b)); }
+function exportPNG() { const c = renderImage(2); if (c) c.toBlob(b => { if (b) download('zeichnung.png', b); }); }
 function printDrawing() {
   const c = renderImage(3);
   if (!c) return;
@@ -808,30 +1213,108 @@ function printDrawing() {
   img.onload = () => window.print();
   img.src = c.toDataURL('image/png');
 }
-function exportDXF() {                       // einfache DXF-Datei: Linien 1:1 in mm, Maße als Linien + Text auf Layer BEMASSUNG
-  const v = paperView();
-  if (!v) return;
-  const n = x => String(Math.round(x * 1e6) / 1e6), k = 1 / v.s, out = ['0', 'SECTION', '2', 'ENTITIES'];
-  const line = (layer, x1, y1, x2, y2) => out.push('0', 'LINE', '8', layer, '10', n(x1), '20', n(y1), '11', n(x2), '21', n(y2));
-  for (const e of ents) {
-    if (e.t === 'line') { line('0', e.x1, e.y1, e.x2, e.y2); continue; }
-    const g = dimGeom(e, k), L = 'BEMASSUNG';
-    for (const l of g.lines) line(L, ...l);
-    for (const [a, b, c] of g.tris) out.push('0', 'SOLID', '8', L, '10', n(a[0]), '20', n(a[1]), '11', n(b[0]), '21', n(b[1]), '12', n(c[0]), '22', n(c[1]), '13', n(c[0]), '23', n(c[1]));
-    out.push('0', 'TEXT', '8', L, '10', n(g.tx), '20', n(g.ty), '40', n(DIM.text * 0.75 * k), '1', g.text, '50', n(g.deg), '72', '1', '11', n(g.tx), '21', n(g.ty));
+const ACI = [];
+function aci(hex) {                          // nächstliegende AutoCAD-Farbnummer (DXF R12 kennt nur diese 255 Farben)
+  if (!ACI.length) {
+    [[255, 0, 0], [255, 255, 0], [0, 255, 0], [0, 255, 255], [0, 0, 255], [255, 0, 255], [255, 255, 255], [128, 128, 128], [192, 192, 192]]
+      .forEach((c, i) => { ACI[i + 1] = c; });
+    const V = [1, 1, 0.8, 0.8, 0.6, 0.6, 0.5, 0.5, 0.3, 0.3];
+    for (let i = 10; i < 250; i++) {
+      const h = (Math.floor(i / 10) - 1) * 15, s = i % 2 ? 0.5 : 1, v = V[i % 10];
+      ACI[i] = [5, 3, 1].map(n => { const k = (n + h / 60) % 6; return Math.round(255 * (v - v * s * Math.max(0, Math.min(k, 4 - k, 1)))); });
+    }
+    [51, 91, 132, 173, 214, 255].forEach((g, i) => { ACI[250 + i] = [g, g, g]; });
   }
-  out.push('0', 'ENDSEC', '0', 'EOF');
-  download('zeichnung.dxf', out.join('\r\n') + '\r\n', 'application/dxf');
+  const c = rgbOf(hex), hi = Math.max(...c), lo = Math.min(...c);
+  if (hi - lo < 16 && (hi < 48 || lo > 224)) return 7;          // Schwarz/Weiß = Farbe 7
+  let best = 7, bd = Infinity;
+  for (let i = 1; i < 256; i++) {
+    if (i === 7) continue;
+    const t = ACI[i], d = 2 * (t[0] - c[0]) ** 2 + 4 * (t[1] - c[1]) ** 2 + 3 * (t[2] - c[2]) ** 2;
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best;
 }
-function saveFile() { download('zeichnung.json', JSON.stringify({ format: 'mini-cad', version: 1, unit: 'mm', ents }, null, 1), 'application/json'); }
+function crc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) {
+    let c = (crc ^ bytes[i]) & 0xFF;
+    for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xEDB88320 : c >>> 1;
+    crc = (crc >>> 8) ^ c;
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+function zip1(name, text) {                  // ZIP-Archiv mit genau einer unkomprimierten Datei
+  const enc = new TextEncoder(), nm = enc.encode(name), data = enc.encode(text), crc = crc32(data), d = new Date();
+  const time = d.getHours() << 11 | d.getMinutes() << 5 | d.getSeconds() >> 1;
+  const date = (d.getFullYear() - 1980) << 9 | (d.getMonth() + 1) << 5 | d.getDate();
+  const head = central => {
+    const v = new DataView(new ArrayBuffer(central ? 46 : 30));
+    let o = 0;
+    const u16 = x => { v.setUint16(o, x, true); o += 2; }, u32 = x => { v.setUint32(o, x, true); o += 4; };
+    u32(central ? 0x02014b50 : 0x04034b50);
+    if (central) u16(20);
+    u16(20); u16(0); u16(0); u16(time); u16(date); u32(crc); u32(data.length); u32(data.length); u16(nm.length); u16(0);
+    if (central) { u16(0); u16(0); u16(0); u32(0); u32(0); }
+    return new Uint8Array(v.buffer);
+  };
+  const local = head(false), central = head(true), end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, 1, true); end.setUint16(10, 1, true);
+  end.setUint32(12, central.length + nm.length, true); end.setUint32(16, local.length + nm.length + data.length, true);
+  return new Blob([local, nm, data, central, nm, new Uint8Array(end.buffer)], { type: 'application/zip' });
+}
+function exportDXF() {                       // DXF R12: Linien 1:1 in mm, Layer mit Farbe und Linienart, Maße als Linien + Text
+  const v = paperView(ents);                 // Maßstab für Pfeile, Text und Strichmuster wie im PNG-Export
+  if (!v) return;
+  const k = 1 / v.s, n = x => String(Math.round(x * 1e6) / 1e6), out = [];
+  const put = (...a) => { for (const x of a) out.push(typeof x === 'number' ? n(x) : x); };
+  const names = new Map(), used = new Set(['0']);
+  for (const l of layers) {                  // R12 erlaubt in Namen nur A–Z, 0–9, $, - und _
+    const s = l.name.toUpperCase().replace(/Ä/g, 'AE').replace(/Ö/g, 'OE').replace(/Ü/g, 'UE')
+      .replace(/[^A-Z0-9$_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 27) || 'LAYER';
+    let u = s, i = 2;
+    while (used.has(u)) u = s + '_' + i++;
+    used.add(u); names.set(l.id, u);
+  }
+  const lts = Object.values(LTYPES);
+  put('0', 'SECTION', '2', 'HEADER', '9', '$ACADVER', '1', 'AC1009', '0', 'ENDSEC');
+  put('0', 'SECTION', '2', 'TABLES', '0', 'TABLE', '2', 'LTYPE', '70', lts.length);
+  for (const t of lts) {
+    const pat = t.dash.map((d, i) => i % 2 ? -d * k : d < 0.1 ? 0 : d * k);
+    put('0', 'LTYPE', '2', t.dxf, '70', 0, '3', t.desc, '72', 65, '73', pat.length, '40', pat.reduce((s, d) => s + Math.abs(d), 0));
+    for (const d of pat) put('49', d);
+  }
+  put('0', 'ENDTAB', '0', 'TABLE', '2', 'LAYER', '70', layers.length + 1);
+  put('0', 'LAYER', '2', '0', '70', 0, '62', 7, '6', 'CONTINUOUS');
+  for (const l of layers) put('0', 'LAYER', '2', names.get(l.id), '70', 0, '62', l.on ? aci(l.color) : -aci(l.color), '6', LTYPES[l.type].dxf);
+  put('0', 'ENDTAB', '0', 'TABLE', '2', 'STYLE', '70', 1);
+  put('0', 'STYLE', '2', 'STANDARD', '70', 0, '40', 0, '41', 1, '50', 0, '71', 0, '42', 2.5, '3', 'txt', '4', '');
+  put('0', 'ENDTAB', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES');
+  for (const e of ents) {
+    const L = names.get(e.l) || '0';
+    if (e.t === 'line') { put('0', 'LINE', '8', L, '10', e.x1, '20', e.y1, '11', e.x2, '21', e.y2); continue; }
+    const g = dimGeom(e, k);
+    for (const [x1, y1, x2, y2] of g.lines) put('0', 'LINE', '8', L, '6', 'CONTINUOUS', '10', x1, '20', y1, '11', x2, '21', y2);
+    for (const [a, b, c] of g.tris) put('0', 'SOLID', '8', L, '10', a[0], '20', a[1], '11', b[0], '21', b[1], '12', c[0], '22', c[1], '13', c[0], '23', c[1]);
+    put('0', 'TEXT', '8', L, '10', g.tx, '20', g.ty, '40', DIM.text * 0.75 * k, '1', g.text, '50', g.deg, '72', 1, '11', g.tx, '21', g.ty);
+  }
+  put('0', 'ENDSEC', '0', 'EOF');
+  const text = out.join('\r\n') + '\r\n';
+  if (inViewer) download('zeichnung-dxf.zip', zip1('zeichnung.dxf', text));   // .dxf selbst lässt der Viewer nicht zu
+  else download('zeichnung.dxf', text, 'application/dxf');
+}
+function saveFile() { download('zeichnung.json', JSON.stringify({ format: 'mini-cad', version: 2, unit: 'mm', layers, ents }, null, 1), 'application/json'); }
 function openFile(file) {
   const rd = new FileReader();
   rd.onload = () => {
-    let list = null;
-    try { const d = JSON.parse(rd.result); list = clean(Array.isArray(d) ? d : d.ents); } catch (e) { /* unten gemeldet */ }
-    if (!list || !list.length) return flash('Die Datei enthält keine lesbare Zeichnung.');
+    let d = null;
+    try { d = JSON.parse(rd.result); } catch (e) { /* unten gemeldet */ }
+    const raw = Array.isArray(d) ? d : d && d.ents;
+    const ls = (d && !Array.isArray(d) && cleanLayers(d.layers)) || layers;   // ältere Dateien ohne Layer: aktuelle Layer behalten
+    const list = cleanEnts(raw, ls);
+    if (!list.length) return flash('Die Datei enthält keine lesbare Zeichnung.');
     sel.clear();
-    change(() => setEnts(list));
+    change(() => { layers = ls; setEnts(list); });
     chain = []; pts = [];
     zoomFit();
   };
@@ -839,7 +1322,7 @@ function openFile(file) {
 }
 
 // ---------- Maus / Touch ----------
-function setMouse(ev) { const r = cv.getBoundingClientRect(); mouse.x = ev.clientX - r.left; mouse.y = ev.clientY - r.top; }
+function setMouse(ev) { const r = cv.getBoundingClientRect(); mouse.x = ev.clientX - r.left; mouse.y = ev.clientY - r.top; mouse.in = true; }
 
 cv.addEventListener('mousedown', ev => { if (ev.button === 1) ev.preventDefault(); });   // kein Auto-Scroll
 cv.addEventListener('contextmenu', ev => ev.preventDefault());
@@ -876,6 +1359,7 @@ cv.addEventListener('pointerup', ev => {
   if (drag && drag.type === 'box') endBox();
   drag = null; refresh();
 });
+cv.addEventListener('pointerleave', () => { if (!drag) { mouse.in = false; refresh(); } });
 cv.addEventListener('pointercancel', () => { drag = null; touches.clear(); pinch = null; gesture = false; refresh(); });
 cv.addEventListener('wheel', ev => {
   ev.preventDefault();
@@ -886,8 +1370,6 @@ cv.addEventListener('wheel', ev => {
 }, { passive: false });
 
 // Touch: tippen/ziehen = Punkt setzen, zwei Finger = verschieben und zoomen
-const touches = new Map();
-let pinch = null, gesture = false;
 function touchDown(ev) {
   touches.set(ev.pointerId, [ev.clientX, ev.clientY]);
   if (touches.size === 2) {
@@ -921,7 +1403,7 @@ function toggle(id, key) { opt[key] = $(id).checked = !opt[key]; save(); }
 
 window.addEventListener('keydown', ev => {
   const t = ev.target, k = ev.key;
-  if ((t instanceof HTMLInputElement && t !== cmd && t.type !== 'checkbox') || t instanceof HTMLSelectElement) {
+  if ((t instanceof HTMLInputElement && t !== cmd && t.type !== 'checkbox' && t.type !== 'radio') || t instanceof HTMLSelectElement) {
     if (k === 'Escape' || k === 'Enter') t.blur();
     return;
   }
@@ -932,7 +1414,7 @@ window.addEventListener('keydown', ev => {
     if (l === 'z') { ev.preventDefault(); if (ev.shiftKey) redo(); else undo(); }
     else if (l === 'y') { ev.preventDefault(); redo(); }
     else if (l === 's') { ev.preventDefault(); saveFile(); }
-    else if (l === 'a') { ev.preventDefault(); if (!boxMode()) setTool('select'); for (const e of ents) sel.add(e.id); refresh(); }
+    else if (l === 'a') { ev.preventDefault(); if (!boxMode()) setTool('select'); for (const e of shown()) sel.add(e.id); refresh(); }
     return;
   }
   if (ev.altKey && !altGr) return;
@@ -975,14 +1457,25 @@ $('ok').onclick = applyTyped;
 $('png').onclick = exportPNG; $('dxf').onclick = exportDXF; $('print').onclick = printDrawing; $('save').onclick = saveFile;
 $('open').onclick = () => $('file').click();
 $('file').onchange = ev => { if (ev.target.files[0]) openFile(ev.target.files[0]); ev.target.value = ''; };
-$('new').onclick = () => {
-  if (!ents.length) return;
-  change(() => setEnts([]));
-  chain = []; pts = [];
-  zoomFit();
-  flash('Zeichnung geleert – Strg+Z holt sie zurück.');
+$('new').onclick = clearDrawing;
+$('helpBtn').onclick = () => togglePanel('help');
+$('closeHelp').onclick = () => { $('help').hidden = true; };
+$('layersBtn').onclick = () => togglePanel('layers');
+$('closeLayers').onclick = () => { $('layers').hidden = true; };
+$('addLayer').onclick = addLayer;
+$('noteClear').onclick = () => { clearDrawing(); $('note').hidden = true; };
+$('noteClose').onclick = () => { $('note').hidden = true; };
+$('layerSel').onchange = ev => {             // ohne Auswahl: aktueller Layer; mit Auswahl: deren Layer ändern
+  const id = +ev.target.value, l = layerById(id);
+  ev.target.blur();
+  if (!l) return;
+  if (tool === 'select' && sel.size) {
+    const n = sel.size;
+    change(() => { for (const e of ents) if (sel.has(e.id)) e.l = id; l.on = true; });
+    flash(n + (n === 1 ? ' Element' : ' Elemente') + ' auf Layer „' + l.name + '“ gesetzt.');
+  } else { curLayer = id; save(); }
+  refresh();
 };
-$('helpBtn').onclick = () => { $('help').hidden = !$('help').hidden; };
 for (const [id, key] of [['oAng', 'ang'], ['oSnap', 'osnap'], ['oGrid', 'grid']]) $(id).onchange = ev => { opt[key] = ev.target.checked; save(); refresh(); };
 $('oStep').onchange = ev => { opt.step = +ev.target.value; ev.target.blur(); save(); refresh(); };
 $('oGridStep').onchange = ev => {
@@ -994,24 +1487,41 @@ $('oGridStep').onchange = ev => {
 // ---------- Start ----------
 function readColors() {
   const cs = getComputedStyle(document.documentElement);
-  for (const k of ['bg', 'grid', 'grid2', 'axis', 'line', 'dim', 'sel', 'snap', 'prev']) C[k] = cs.getPropertyValue('--cv-' + k).trim();
+  for (const k of ['bg', 'grid', 'grid2', 'axis', 'line', 'sel', 'snap', 'prev']) C[k] = cs.getPropertyValue('--cv-' + k).trim();
+  C.ui = cs.getPropertyValue('--ui-bg').trim();
+  for (const k of ['bg', 'line', 'ui']) if (!/^#[0-9a-f]{6}$/i.test(C[k])) C[k] = k === 'line' ? '#14171a' : '#ffffff';
 }
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { readColors(); refresh(); });
+const onTheme = () => { readColors(); refresh(); };
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', onTheme);
+new MutationObserver(onTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+readColors();
 
 try {                                        // letzte Zeichnung aus dem Browser-Speicher holen
   const d = JSON.parse(localStorage.getItem(KEY));
-  if (d) {
-    setEnts(clean(d.ents));
+  if (d && typeof d === 'object') {
+    layers = cleanLayers(d.layers) || defaultLayers();
+    setEnts(cleanEnts(d.ents, layers));
+    curLayer = layerById(d.curLayer) ? d.curLayer : baseLayer().id;
     const o = d.opt || {};
     for (const k of ['ang', 'osnap', 'grid']) if (typeof o[k] === 'boolean') opt[k] = o[k];
     if ([15, 30, 45, 90].includes(o.step)) opt.step = o.step;
     if (o.gridStep > 0) opt.gridStep = o.gridStep;
   }
 } catch (e) { /* nichts gespeichert */ }
+if (!layers.length) { loadSample(); $('note').hidden = false; }   // erster Start: Beispielzeichnung
 
 $('oAng').checked = opt.ang; $('oSnap').checked = opt.osnap; $('oGrid').checked = opt.grid;
 $('oStep').value = opt.step; $('oGridStep').value = opt.gridStep;
-readColors();
+
+if (inViewer) {                              // claude.ai: kein Druckdialog, Dateien über die Download-Funktion
+  $('print').hidden = true;
+  const btns = ['save', 'png', 'dxf'].map($);
+  for (const b of btns) b.disabled = true;
+  Promise.resolve().then(() => window.claude.use('downloads')).then(d => { saver = d; }, () => { saver = null; }).then(() => {
+    for (const b of btns) { b.disabled = !saver; b.hidden = !saver; }
+    if (saver) $('dxf').title = 'Für AutoCAD & Co. exportieren (ZIP mit der DXF-Datei)';
+  });
+}
 
 let started = false;
 new ResizeObserver(() => {
