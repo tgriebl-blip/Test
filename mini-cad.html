@@ -78,6 +78,12 @@
   .lon { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
   .lsel { font-variant-numeric: tabular-nums; }
   .ldel.armed { background: var(--ui-warn); border-color: var(--ui-warn); color: var(--ui-on); }
+  .seg { display: inline-flex; align-items: center; }
+  .seg .segl { margin-right: 6px; color: var(--ui-muted); white-space: nowrap; }
+  .seg button { border-radius: 0; }
+  .seg button + button { margin-left: -1px; }
+  .seg button:first-of-type { border-radius: 4px 0 0 4px; }
+  .seg button:last-of-type { border-radius: 0 4px 4px 0; }
   #layerHint { margin: 8px 0 0; color: var(--ui-muted); max-width: 75ch; }
   #note { position: absolute; left: max(8px, env(safe-area-inset-left, 0px)); bottom: 8px; max-width: calc(100% - 16px);
           display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 8px 6px 12px;
@@ -171,11 +177,16 @@
     <h3>Bemaßung (B)</h3>
     <p>Zwei Punkte (oder direkt eine Linie) anklicken, dann die Lage der Maßlinie anklicken oder ihren Abstand tippen.
        Bei schrägen Strecken: Maus ober-/unterhalb = horizontales Maß, seitlich = vertikales Maß, sonst ausgerichtet.</p>
-    <h3>Auswahl (A)</h3>
+    <h3>Auswahl (A) und Griffe</h3>
     <p>Element anklicken (Umschalt = mehrere) oder Fenster aufziehen (nach links gezogen = auch Angeschnittenes). Entf löscht, Strg+A wählt alles.</p>
+    <p>Ausgewählte Linien und Maße zeigen blaue Griffe: an den Linienenden, bei Maßen an beiden Messpunkten und in der Mitte der Maßlinie.
+       Griff anklicken (oder ziehen), dann die neue Lage anklicken oder einen Weg tippen + Enter. So lassen sich Messpunkte und Maßlinie
+       nachträglich versetzen. Liegen Enden mehrerer ausgewählter Elemente aufeinander, wandern sie gemeinsam.</p>
     <h3>Verschieben (M) · Kopieren (K)</h3>
-    <p>Elemente auswählen, Befehl wählen, Basispunkt anklicken, dann Zielpunkt anklicken – oder Richtung zeigen, <b>Abstand tippen</b> und Enter.
-       Kopieren legt weitere Kopien ab, bis Esc gedrückt wird.</p>
+    <p>Elemente auswählen, Befehl wählen, Ausgangspunkt anklicken, dann Zielpunkt anklicken – oder Richtung zeigen, <b>Maß tippen</b> und Enter.
+       Das Maß ist die Verschiebung: Die ganze Auswahl wandert um genau diesen Weg (wie in AutoCAD).</p>
+    <p>Beim Kopieren schaltet unten <b>Abstand dazwischen</b> um: Dann ist das getippte Maß die Luft zwischen Original und Kopie,
+       z. B. 150 mm zwischen zwei 19 mm starken Brettern. Jede weitere Kopie setzt an der letzten an, bis Esc gedrückt wird.</p>
     <h3>Versetzen (V)</h3>
     <p>Linie anklicken, Maus auf die gewünschte Seite bewegen, Abstand tippen + Enter: erzeugt eine parallele Kopie auf demselben Layer.
        Der Abstand bleibt gemerkt – bei der nächsten Linie genügt ein Klick auf die Seite.</p>
@@ -198,6 +209,11 @@
 
 <div id="status">
   <span id="prompt"></span>
+  <span id="mvMode" class="seg" hidden>
+    <span class="segl">Maß =</span>
+    <button type="button" id="mvShift" title="Das getippte Maß ist der Weg, um den die Kopie wandert (wie in AutoCAD).">Verschiebung</button>
+    <button type="button" id="mvGap" title="Das getippte Maß ist die Luft zwischen Original und Kopie, z. B. 150 mm zwischen zwei Brettern.">Abstand dazwischen</button>
+  </span>
   <span class="grp">
     <input id="cmd" autocomplete="off" spellcheck="false" placeholder="Länge / Wert" title="Wert eingeben und Enter drücken">
     <button type="button" id="ok" title="Eingabe bestätigen bzw. Befehl beenden (Enter)" aria-label="Eingabe bestätigen">↵</button>
@@ -230,11 +246,14 @@ let selecting = false;                           // Verschieben/Kopieren: erst n
 let first = null;                                // Versetzen/Ecke: zuerst angeklickte Linie {id, x, y}
 let offDist = 0;                                 // zuletzt benutzter Abstand beim Versetzen
 let hoverId = 0;                                 // Element unter dem Zeiger (beim Auswählen)
+let grip = null;                                 // Griff-Bearbeitung: {refs:[{id,k}], from, kind:'lp'|'dp'|'dl', held, sx, sy}
+let copyHist = [];                               // Kopieren: vorige Auswahl und Ausgangspunkt je Kopie (für Rückgängig)
+let dirHold = null;                              // Mausposition beim letzten getippten Maß: bleibt die Maus dort, gilt die alte Richtung
 let lastDir = 0, drag = null, spaceDown = false, lastMid = 0, raf = 0, flashMsg = '', flashTimer = 0;
 let undoStack = [], redoStack = [];
 const touches = new Map();
 let pinch = null, gesture = false;
-const opt = { ang: true, step: 45, osnap: true, grid: true, gridStep: 1 };
+const opt = { ang: true, step: 45, osnap: true, grid: true, gridStep: 1, gap: false };
 const APERTURE = 10;                                              // Fangradius in Pixeln
 const DIM = { arrow: 9, gap: 3, over: 5, text: 12, textGap: 4 };  // Bemaßungsgrößen in Pixeln
 const KEY = 'minicad.v1';
@@ -260,9 +279,10 @@ const num = s => /^[+-]?(\d+([.,]\d*)?|[.,]\d+)$/.test(s = s.trim()) ? parseFloa
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const byId = id => ents.find(e => e.id === id);
 const moving = () => tool === 'move' || tool === 'copy';
-const boxMode = () => tool === 'select' || selecting;                                        // Klick/Fenster wählt Elemente aus
+const boxMode = () => (tool === 'select' && !grip) || selecting;                                        // Klick/Fenster wählt Elemente aus
 const freePick = () => boxMode() || tool === 'offset' || tool === 'trim' || tool === 'corner';   // Zeiger pickt Elemente, kein Punktfang
 function rayBase() {                         // Ausgangspunkt für Winkelfang und getippte Längen
+  if (grip) return grip.from;
   if (tool === 'line') return chain[chain.length - 1] || null;
   return moving() && pts.length ? pts[0] : null;
 }
@@ -378,6 +398,7 @@ function findSnap(w, skip) {                 // Objektfang: End-, Mittel- und Sc
   return best;
 }
 function curDir(base) {                      // Zeichenrichtung in Grad – abhängig von der Lage des Zeigers
+  if (dirHold && dirHold.x === mouse.x && dirHold.y === mouse.y) return lastDir;   // mehrmals tippen ohne Maus: gleiche Richtung
   const w = !opt.ang && cur.snap ? cur : s2w(mouse.x, mouse.y);
   if (dist(base, w) * view.s < 1) return lastDir;
   let d = angleDeg(base, w);
@@ -444,16 +465,23 @@ function typedPoint(s) {                     // getippten Text in einen Punkt um
   }
   const l = num(s);
   if (isNaN(l) || !l) return null;
+  if (grip && grip.kind === 'dl') {          // Maßlinie: getippter Wert = Abstand zu den Messpunkten
+    const e = byId(grip.refs[0].id);
+    return e ? offsetPoint({ x: e.x1, y: e.y1 }, { x: e.x2, y: e.y2 }, e.mode, w, Math.abs(l)) : null;
+  }
   if (ray) { const [dx, dy] = dirVec(curDir(base)); return { x: base.x + l * dx, y: base.y + l * dy }; }
   if (tool === 'rect') return { x: base.x + Math.abs(l) * (w.x < base.x ? -1 : 1), y: base.y + Math.abs(l) * (w.y < base.y ? -1 : 1) };
   if (placing) {                             // Abstand der Maßlinie
-    const [a, b] = pts, mode = dimMode(a, b, w), d = Math.abs(l);
-    if (mode === 'h') return { mode, x: w.x, y: w.y >= (a.y + b.y) / 2 ? Math.max(a.y, b.y) + d : Math.min(a.y, b.y) - d };
-    if (mode === 'v') return { mode, y: w.y, x: w.x >= (a.x + b.x) / 2 ? Math.max(a.x, b.x) + d : Math.min(a.x, b.x) - d };
-    const L = dist(a, b), nx = -(b.y - a.y) / L, ny = (b.x - a.x) / L, side = (w.x - a.x) * nx + (w.y - a.y) * ny < 0 ? -1 : 1;
-    return { mode, x: a.x + nx * d * side, y: a.y + ny * d * side };
+    const [a, b] = pts, mode = dimMode(a, b, w);
+    return { mode, ...offsetPoint(a, b, mode, w, Math.abs(l)) };
   }
   return null;
+}
+function offsetPoint(a, b, mode, w, d) {     // Lage der Maßlinie im Abstand d von den Messpunkten, auf der Seite des Zeigers
+  if (mode === 'h') return { x: w.x, y: w.y >= (a.y + b.y) / 2 ? Math.max(a.y, b.y) + d : Math.min(a.y, b.y) - d };
+  if (mode === 'v') return { y: w.y, x: w.x >= (a.x + b.x) / 2 ? Math.max(a.x, b.x) + d : Math.min(a.x, b.x) - d };
+  const L = dist(a, b), nx = -(b.y - a.y) / L, ny = (b.x - a.x) / L, side = (w.x - a.x) * nx + (w.y - a.y) * ny < 0 ? -1 : 1;
+  return { x: a.x + nx * d * side, y: a.y + ny * d * side };
 }
 function target() {                          // der Punkt, der bei Klick/Enter gesetzt wird
   const s = cmd.value.trim();
@@ -473,6 +501,7 @@ function applyTyped() {
   if (!p) return flash('Eingabe „' + s + '“ passt hier nicht.');
   cmd.value = '';
   pick(p, p.mode);
+  dirHold = { x: mouse.x, y: mouse.y };
   refresh();
 }
 
@@ -486,7 +515,8 @@ const addLine = (a, b) => addEnt({ t: 'line', l: curLayer, x1: a.x, y1: a.y, x2:
 
 function dimMode(a, b, p) {                  // Art des Maßes je nach Lage des Zeigers
   const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
-  if (x1 - x0 < 1e-7 || y1 - y0 < 1e-7) return 'a';
+  if (y1 - y0 < 1e-7) return 'h';            // waagerechte Strecke: bleibt beim späteren Ändern ein waagerechtes Maß
+  if (x1 - x0 < 1e-7) return 'v';
   const inX = p.x >= x0 && p.x <= x1, inY = p.y >= y0 && p.y <= y1;
   return inX && !inY ? 'h' : inY && !inX ? 'v' : 'a';
 }
@@ -496,6 +526,7 @@ function dimEnt(p, mode) {
 }
 function pick(p, mode) {                     // einen Punkt an den aktiven Befehl übergeben
   p = { x: R(p.x), y: R(p.y) };
+  if (grip) return applyGrip(p);
   if (tool === 'line') {
     const a = chain[chain.length - 1];
     if (!a) { chain = [p]; return; }
@@ -518,12 +549,88 @@ function pick(p, mode) {                     // einen Punkt an den aktiven Befeh
     pts = [];
   } else if (moving()) {
     const a = pts[0];
-    if (!a) { pts = [p]; return; }                           // Basispunkt
+    if (!a) { pts = [p]; return; }                           // Ausgangspunkt
     if (same(a, p)) return;
-    const dx = p.x - a.x, dy = p.y - a.y;
+    const { dx, dy } = moveDelta(p);
     lastDir = angleDeg(a, p);
-    if (tool === 'copy') change(() => { for (const e of ents.filter(e => sel.has(e.id))) ents.push(shiftEnt({ ...e, id: nextId++ }, dx, dy)); });
-    else { change(() => { for (const e of ents) if (sel.has(e.id)) shiftEnt(e, dx, dy); }); setTool('select'); }
+    if (tool === 'copy') {
+      const src = ents.filter(e => sel.has(e.id)), made = [];
+      commitLive();
+      copyHist.push({ ids: [...sel], base: a, depth: undoStack.length });
+      change(() => { for (const e of src) { const c = shiftEnt({ ...e, id: nextId++ }, dx, dy); ents.push(c); made.push(c.id); } });
+      sel.clear(); for (const id of made) sel.add(id);
+      pts = [{ x: R(a.x + dx), y: R(a.y + dy) }];              // die nächste Kopie setzt an dieser an
+    } else { change(() => { for (const e of ents) if (sel.has(e.id)) shiftEnt(e, dx, dy); }); setTool('select'); }
+  }
+}
+function selExtent(ux, uy) {                 // Ausdehnung der Auswahl in Richtung (ux, uy); Maße zählen nur ohne Linien
+  const list = shown().filter(e => sel.has(e.id)), lines = list.filter(e => e.t === 'line'), use = lines.length ? lines : list;
+  let lo = Infinity, hi = -Infinity;
+  for (const e of use) for (const [x, y] of [[e.x1, e.y1], [e.x2, e.y2]]) { const q = x * ux + y * uy; lo = Math.min(lo, q); hi = Math.max(hi, q); }
+  return use.length ? hi - lo : 0;
+}
+function moveDelta(T) {                      // Verschiebung zum Zielpunkt T; Kopieren mit „Abstand dazwischen“: Maß = Luft zwischen Original und Kopie
+  const a = pts[0], dx = T.x - a.x, dy = T.y - a.y, L = Math.hypot(dx, dy);
+  if (L < 1e-9) return { dx: 0, dy: 0, L: 0, gap: null };
+  const ux = dx / L, uy = dy / L, ext = tool === 'copy' ? selExtent(ux, uy) : 0;
+  if (tool === 'copy' && opt.gap) return { dx: dx + ext * ux, dy: dy + ext * uy, L: L + ext, gap: L };
+  return { dx, dy, L, gap: ext > 1e-9 && L - ext >= -1e-9 ? L - ext : null };
+}
+
+// ---------- Griffe: Linienenden, Messpunkte und Maßlinie ----------
+function gripsOf(e) {
+  if (e.t === 'line') return [['p1', e.x1, e.y1], ['p2', e.x2, e.y2]];
+  const g = dimGeom(e, 1 / view.s);
+  return [['p1', e.x1, e.y1], ['p2', e.x2, e.y2], ['dl', (g.p1[0] + g.p2[0]) / 2, (g.p1[1] + g.p2[1]) / 2]];
+}
+function gripAt(sx, sy, rad) {               // Griff einer ausgewählten Linie oder Bemaßung unter dem Zeiger
+  if (tool !== 'select' || !sel.size || sel.size > 400) return null;
+  const list = shown().filter(e => sel.has(e.id));
+  let best = null, bd = rad;
+  for (const e of list) for (const [k, x, y] of gripsOf(e)) {
+    const [gx, gy] = w2s(x, y), d = Math.hypot(gx - sx, gy - sy);
+    if (d <= bd) { bd = d; best = { e, k, x, y }; }
+  }
+  if (!best) return null;
+  const from = { x: best.x, y: best.y }, refs = [];
+  if (best.k === 'dl') refs.push({ id: best.e.id, k: 'dl' });
+  else for (const e of list) for (const [k, x, y] of gripsOf(e)) if (k !== 'dl' && same({ x, y }, from)) refs.push({ id: e.id, k });   // aufeinanderliegende Enden wandern gemeinsam
+  return { refs, from, kind: best.k === 'dl' ? 'dl' : refs.some(r => byId(r.id).t === 'line') ? 'lp' : 'dp' };
+}
+function startGrip(g) { grip = { ...g, held: true, sx: mouse.x, sy: mouse.y }; cmd.value = ''; }
+function withGrip(e, k, q) {
+  const c = { ...e };
+  if (c.t === 'dim' && c.mode === 'a' && k !== 'dl') {       // waagerecht/senkrecht liegendes Maß bleibt waagerecht/senkrecht
+    if (Math.abs(e.y1 - e.y2) < 1e-7) c.mode = 'h'; else if (Math.abs(e.x1 - e.x2) < 1e-7) c.mode = 'v';
+  }
+  if (k === 'p1') { c.x1 = q.x; c.y1 = q.y; } else if (k === 'p2') { c.x2 = q.x; c.y2 = q.y; } else { c.px = q.x; c.py = q.y; }
+  return c;
+}
+function gripResult(q) { return grip.refs.map(r => { const e = byId(r.id); return e && withGrip(e, r.k, q); }).filter(Boolean); }
+const measured = e => e.t === 'dim' && e.mode === 'h' ? Math.abs(e.x2 - e.x1) : e.t === 'dim' && e.mode === 'v' ? Math.abs(e.y2 - e.y1) : Math.hypot(e.x2 - e.x1, e.y2 - e.y1);
+function dimOffset(e) {                      // Abstand der Maßlinie von den Messpunkten
+  if (e.mode === 'h') { const hi = Math.max(e.y1, e.y2), lo = Math.min(e.y1, e.y2); return e.py > hi ? e.py - hi : e.py < lo ? lo - e.py : 0; }
+  if (e.mode === 'v') { const hi = Math.max(e.x1, e.x2), lo = Math.min(e.x1, e.x2); return e.px > hi ? e.px - hi : e.px < lo ? lo - e.px : 0; }
+  const L = Math.hypot(e.x2 - e.x1, e.y2 - e.y1) || 1;
+  return Math.abs(-(e.px - e.x1) * (e.y2 - e.y1) / L + (e.py - e.y1) * (e.x2 - e.x1) / L);
+}
+function applyGrip(q) {
+  if (same(q, grip.from)) return;                            // gleiche Stelle: Griff bleibt aktiv
+  const res = gripResult(q);
+  if (res.some(e => measured(e) < 1e-7)) return flash('An dieser Stelle hätte die Linie bzw. das Maß keine Länge mehr.');
+  change(() => { for (const c of res) ents[ents.findIndex(e => e.id === c.id)] = c; });
+  grip = null;
+}
+function drawGrips() {
+  if (tool !== 'select' || !sel.size || sel.size > 400) return;
+  const hot = grip ? null : mouse.in && !drag && !gesture && gripAt(mouse.x, mouse.y, 7);
+  for (const e of shown()) {
+    if (!sel.has(e.id)) continue;
+    for (const [k, x, y] of gripsOf(e)) {
+      const [sx, sy] = w2s(x, y), on = (grip || hot) && (grip || hot).refs.some(r => r.id === e.id && r.k === k);
+      ctx.fillStyle = on ? C.snap : C.prev;
+      ctx.fillRect(Math.round(sx) - 4, Math.round(sy) - 4, 8, 8);
+    }
   }
 }
 
@@ -605,15 +712,17 @@ function click() {
   pick(p, p.mode);
 }
 function finish() {                          // Enter / Rechtsklick
-  if (selecting) { if (sel.size) selecting = false; else flash('Erst Elemente anklicken oder ein Fenster aufziehen.'); }
+  if (grip) grip = null;
+  else if (selecting) { if (sel.size) selecting = false; else flash('Erst Elemente anklicken oder ein Fenster aufziehen.'); }
   else if (moving()) return setTool('select');
   else { chain = []; pts = []; first = null; }
   refresh();
 }
 function escape() {
   if (cmd.value) cmd.value = '';
-  else if (chain.length || pts.length || first) { chain = []; pts = []; first = null; }
+  else if (grip) grip = null;
   else if (moving()) return setTool('select');
+  else if (chain.length || pts.length || first) { chain = []; pts = []; first = null; }
   else if (sel.size) sel.clear();
   else if (!$('layers').hidden) $('layers').hidden = true;
   else if (!$('help').hidden) $('help').hidden = true;
@@ -622,7 +731,7 @@ function escape() {
 }
 function setTool(t) {
   const one = t === 'offset' && sel.size === 1 && ents.find(e => sel.has(e.id) && e.t === 'line');   // vorgewählte Linie übernehmen
-  tool = t; chain = []; pts = []; cmd.value = '';
+  tool = t; chain = []; pts = []; cmd.value = ''; grip = null; copyHist = []; dirHold = null;
   if (t !== 'select' && !moving()) sel.clear();
   selecting = moving() && !sel.size;
   first = one ? { id: one.id } : null;
@@ -640,6 +749,7 @@ function fixState() {                        // Auswahl und Bezüge an geändert
   if (!layerById(curLayer)) curLayer = baseLayer().id;
   for (const id of [...sel]) { const e = byId(id); if (!e || !isOn(e)) sel.delete(id); }
   if (first) { const e = byId(first.id); if (!e || !isOn(e)) first = null; }
+  if (grip && grip.refs.some(r => { const e = byId(r.id); return !e || !isOn(e); })) grip = null;
 }
 function setEnts(list) {
   ents = list; nextId = ents.reduce((m, e) => Math.max(m, e.id), 0) + 1; first = null;
@@ -663,7 +773,14 @@ function undo() {
       const a = chain[chain.length - 2], b = chain[chain.length - 1];
       if (!ents.some(e => e.t === 'line' && same({ x: e.x1, y: e.y1 }, a) && same({ x: e.x2, y: e.y2 }, b))) chain.pop();
     }
-    pts = []; save();
+    pts = []; grip = null;
+    const h = copyHist[copyHist.length - 1];
+    if (tool === 'copy' && h && h.depth === undoStack.length) {   // Kopieren läuft weiter: zurück zur vorigen Kopie
+      copyHist.pop(); sel.clear();
+      for (const id of h.ids) if (byId(id)) sel.add(id);
+      if (sel.size) pts = [h.base];
+    }
+    save();
   }
   refresh();
 }
@@ -672,10 +789,11 @@ function redo() {
   if (!redoStack.length) return;
   undoStack.push(snapshot());
   restore(redoStack.pop());
-  chain = []; pts = []; save(); refresh();
+  chain = []; pts = []; grip = null; copyHist = []; save(); refresh();
 }
 function delSel() {
   if (!sel.size) return;
+  grip = null;
   change(() => { ents = ents.filter(e => !sel.has(e.id)); });
   sel.clear(); refresh();
 }
@@ -1004,13 +1122,6 @@ function drawEnts(c, v, bg, fg, live) {      // live = Bildschirm mit Auswahl; s
     const col = live && sel.has(e.id) ? C.sel : live && e.id === hoverId ? C.prev : ink(lay(e).color, bg, fg);
     drawDim(c, v, e, col);
   }
-  if (live && sel.size && sel.size <= 400) { // Griffe an den Linienenden
-    c.fillStyle = C.prev;
-    for (const e of list) {
-      if (e.t !== 'line' || !sel.has(e.id)) continue;
-      for (const [x, y] of [[e.x1, e.y1], [e.x2, e.y2]]) { const [sx, sy] = w2s(x, y, v); c.fillRect(sx - 3, sy - 3, 6, 6); }
-    }
-  }
 }
 function drawGrid(W, H) {
   const m = gridUnit(), a = s2w(0, H), b = s2w(W, 0);
@@ -1056,17 +1167,30 @@ function drawPreview() {
     ctx.setLineDash([4, 4]);
     ctx.beginPath(); ctx.moveTo(...w2s(pts[0].x, pts[0].y)); ctx.lineTo(tx, ty); ctx.stroke();
   } else if (tool === 'dim' && pts.length === 2) drawDim(ctx, view, dimEnt(T, T.mode), inkOf(dimLayer()));
+  else if (grip) {                                           // Griff: Ergebnis zeigen
+    const res = gripResult(T), one = res.length === 1 ? res[0] : null;
+    for (const c of res) { const l = lay(c); if (c.t === 'dim') drawDim(ctx, view, c, inkOf(l)); else { lineStyle(ctx, l, inkOf(l)); seg(ctx, view, c); ctx.setLineDash([]); } }
+    strokeLine({ x1: grip.from.x, y1: grip.from.y, x2: T.x, y2: T.y }, C.prev, 1, [4, 4]);
+    if (one && one.t === 'line') label('Länge ' + fmt(measured(one)) + ' mm   ' + fmt(angleDeg({ x: one.x1, y: one.y1 }, { x: one.x2, y: one.y2 }), 1) + '°');
+    else if (one && grip.kind === 'dl') label('Abstand ' + fmt(dimOffset(one)) + ' mm');
+    else if (one) label('Maß ' + fmt(measured(one)) + ' mm');
+    else if (dist(grip.from, T) > 1e-9) label(fmt(dist(grip.from, T)) + ' mm   ' + fmt(angleDeg(grip.from, T), 1) + '°');
+  }
   else if (moving() && pts.length) {                         // Auswahl an der neuen Stelle
-    const a = pts[0], dx = T.x - a.x, dy = T.y - a.y;
+    const a = pts[0], md = moveDelta(T);
     ctx.save(); ctx.globalAlpha = 0.7;
     for (const e of shown()) {
       if (!sel.has(e.id)) continue;
-      const c = shiftEnt({ ...e }, dx, dy), l = lay(e);
+      const c = shiftEnt({ ...e }, md.dx, md.dy), l = lay(e);
       if (c.t === 'dim') drawDim(ctx, view, c, inkOf(l)); else { lineStyle(ctx, l, inkOf(l)); seg(ctx, view, c); }
     }
     ctx.restore(); ctx.setLineDash([]);
     strokeLine({ x1: a.x, y1: a.y, x2: T.x, y2: T.y }, C.prev, 1, [4, 4]);
-    if (dist(a, T) > 1e-9) label(fmt(dist(a, T)) + ' mm   ' + fmt(angleDeg(a, T), 1) + '°');
+    if (md.L > 1e-9) {
+      const ang = fmt(angleDeg(a, T), 1) + '°', differs = md.gap != null && Math.abs(md.gap - md.L) > 1e-9;
+      label(tool === 'copy' && opt.gap ? 'Abstand dazwischen ' + fmt(md.gap) + ' mm   ' + ang + (differs ? '   · Verschiebung ' + fmt(md.L) + ' mm' : '')
+        : fmt(md.L) + ' mm   ' + ang + (differs ? '   · Abstand dazwischen ' + fmt(md.gap) + ' mm' : ''));
+    }
   } else if (tool === 'trim') {                              // Teilstück, das entfernt würde
     const e = hit(mouse.x, mouse.y, 'line'), r = e && trimPart(e, w);
     if (r) strokeLine({ x1: r.a ? r.a.x : e.x1, y1: r.a ? r.a.y : e.y1, x2: r.b ? r.b.x : e.x2, y2: r.b ? r.b.y : e.y2 }, C.sel, 3, [6, 5]);
@@ -1107,24 +1231,30 @@ function draw() {
   ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
   drawGrid(W, H);
   drawEnts(ctx, view, C.bg, C.line, true);
+  drawGrips();
   drawPreview();
 }
 function status() {
   let p;
   if (flashMsg) p = flashMsg;
+  else if (grip) p = grip.kind === 'dl' ? 'MASSLINIE VERSCHIEBEN: neue Lage anklicken oder Abstand zu den Messpunkten tippen + Enter · Esc bricht ab'
+    : grip.kind === 'dp' ? 'MESSPUNKT VERSCHIEBEN: neuen Punkt anklicken oder Weg in mm tippen + Enter · Esc bricht ab'
+    : 'ENDPUNKT VERSCHIEBEN: neue Lage anklicken oder Weg in mm tippen + Enter' + (grip.refs.length > 1 ? ' (' + grip.refs.length + ' Enden gemeinsam)' : '') + ' · Esc bricht ab';
   else if (tool === 'select') {
     const one = sel.size === 1 && ents.find(e => sel.has(e.id));
     if (one && one.t === 'line') {
       const a = { x: one.x1, y: one.y1 }, b = { x: one.x2, y: one.y2 };
-      p = 'Linie auf „' + lay(one).name + '“: Länge ' + fmt(dist(a, b)) + ' mm, Winkel ' + fmt(angleDeg(a, b), 1) + '° · oben anderen Layer wählen · Entf löscht';
-    } else p = sel.size ? sel.size + (sel.size === 1 ? ' Element' : ' Elemente') + ' ausgewählt · oben anderen Layer wählen · M verschieben · K kopieren · Entf löscht'
+      p = 'Linie auf „' + lay(one).name + '“: Länge ' + fmt(dist(a, b)) + ' mm, Winkel ' + fmt(angleDeg(a, b), 1) + '° · Griffe an den Enden ziehen ändert · Entf löscht';
+    } else if (one) p = 'Maß ' + fmt(measured(one)) + ' mm: Griffe an den Messpunkten oder an der Maßlinie anklicken, um sie zu versetzen · Entf löscht';
+    else p = sel.size ? sel.size + ' Elemente ausgewählt · Griffe ziehen ändert · oben anderen Layer wählen · M verschieben · K kopieren · Entf löscht'
       : 'AUSWAHL: Element anklicken oder Fenster aufziehen';
   }
   else if (moving()) {
     const n = tool === 'move' ? 'VERSCHIEBEN: ' : 'KOPIEREN: ', cnt = sel.size + (sel.size === 1 ? ' Element' : ' Elemente');
     p = n + (selecting ? 'Elemente anklicken oder Fenster aufziehen, dann Enter oder Rechtsklick' + (sel.size ? ' (' + cnt + ' gewählt)' : '')
-      : !pts.length ? 'Basispunkt anklicken (' + cnt + ')'
-      : 'Zielpunkt anklicken oder Abstand in mm tippen + Enter (Richtung = Lage des Zeigers)' + (tool === 'copy' ? ' · Esc beendet' : ''));
+      : !pts.length ? 'Ausgangspunkt anklicken (' + cnt + ')'
+      : tool === 'copy' && opt.gap ? 'Abstand zwischen Original und Kopie in mm tippen + Enter (Richtung = Lage des Zeigers) · Esc beendet'
+      : 'Zielpunkt anklicken oder Maß in mm tippen + Enter (Richtung = Lage des Zeigers)' + (tool === 'copy' ? ' · Esc beendet' : ''));
   }
   else if (tool === 'offset') p = !first ? 'VERSETZEN: Linie anklicken, die parallel kopiert werden soll'
     : offDist ? 'VERSETZEN: Seite anklicken (Abstand ' + fmt(offDist) + ' mm) oder neuen Abstand tippen + Enter'
@@ -1135,6 +1265,8 @@ function status() {
   else if (tool === 'rect') p = 'RECHTECK auf ' + curName() + ': ' + (pts.length ? 'Breite;Höhe tippen + Enter oder zweite Ecke anklicken' : 'erste Ecke anklicken');
   else p = ['BEMASSUNG: ersten Messpunkt oder direkt eine Linie anklicken', 'BEMASSUNG: zweiten Messpunkt anklicken', 'BEMASSUNG: Lage der Maßlinie anklicken (oder Abstand tippen + Enter)'][pts.length];
   $('prompt').textContent = p;
+  $('mvMode').hidden = !(tool === 'copy' && !selecting);
+  for (const [id, on] of [['mvShift', !opt.gap], ['mvGap', !!opt.gap]]) { $(id).classList.toggle('on', on); $(id).setAttribute('aria-pressed', String(on)); }
   $('coords').textContent = 'X ' + fmt(cur.x) + '   Y ' + fmt(cur.y) + '   ·   Gitter ' + fmt(gridUnit(), 3) + ' mm';
 }
 function refresh() {
@@ -1337,7 +1469,9 @@ cv.addEventListener('pointerdown', ev => {
     drag = { type: 'pan', btn: ev.button, x: ev.clientX, y: ev.clientY, moved: 0 };
     ev.preventDefault();
   } else if (ev.button === 0) {
-    if (boxMode()) drag = { type: 'box', x0: mouse.x, y0: mouse.y, add: ev.shiftKey || selecting };
+    const g = tool === 'select' && !grip && !ev.shiftKey && gripAt(mouse.x, mouse.y, 7);
+    if (g) startGrip(g);
+    else if (boxMode()) drag = { type: 'box', x0: mouse.x, y0: mouse.y, add: ev.shiftKey || selecting };
     else click();
   }
   refresh();
@@ -1355,6 +1489,10 @@ cv.addEventListener('pointermove', ev => {
 cv.addEventListener('pointerup', ev => {
   if (ev.pointerType === 'touch') return touchUp(ev);
   setMouse(ev);
+  if (grip && grip.held && ev.button === 0) {                // Griff gezogen und losgelassen: dort ablegen
+    grip.held = false;
+    if (Math.hypot(mouse.x - grip.sx, mouse.y - grip.sy) > 4) click();
+  }
   if (drag && drag.type === 'pan' && drag.btn === 2 && drag.moved < 5) finish();   // Rechtsklick = Befehl beenden
   if (drag && drag.type === 'box') endBox();
   drag = null; refresh();
@@ -1376,7 +1514,11 @@ function touchDown(ev) {
     const [a, b] = [...touches.values()];
     pinch = { d: Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, cx: (a[0] + b[0]) / 2, cy: (a[1] + b[1]) / 2, v: { ...view } };
     gesture = true; drag = null;
-  } else if (boxMode() && !gesture) drag = { type: 'box', x0: mouse.x, y0: mouse.y, add: selecting };
+  } else if (!gesture) {
+    const g = tool === 'select' && !grip && gripAt(mouse.x, mouse.y, 14);
+    if (g) startGrip(g);
+    else if (boxMode()) drag = { type: 'box', x0: mouse.x, y0: mouse.y, add: selecting };
+  }
   refresh();
 }
 function touchMove(ev) {
@@ -1394,7 +1536,8 @@ function touchUp(ev) {
   touches.delete(ev.pointerId);
   if (gesture) { if (!touches.size) { gesture = false; pinch = null; } return; }
   setMouse(ev);
-  if (drag && drag.type === 'box') endBox(); else if (!boxMode()) click();
+  if (grip && grip.held) { grip.held = false; if (Math.hypot(mouse.x - grip.sx, mouse.y - grip.sy) > 8) click(); }
+  else if (drag && drag.type === 'box') endBox(); else if (!boxMode()) click();
   drag = null; refresh();
 }
 
@@ -1465,6 +1608,8 @@ $('closeLayers').onclick = () => { $('layers').hidden = true; };
 $('addLayer').onclick = addLayer;
 $('noteClear').onclick = () => { clearDrawing(); $('note').hidden = true; };
 $('noteClose').onclick = () => { $('note').hidden = true; };
+$('mvShift').onclick = () => { opt.gap = false; save(); refresh(); };
+$('mvGap').onclick = () => { opt.gap = true; save(); refresh(); };
 $('layerSel').onchange = ev => {             // ohne Auswahl: aktueller Layer; mit Auswahl: deren Layer ändern
   const id = +ev.target.value, l = layerById(id);
   ev.target.blur();
@@ -1503,7 +1648,7 @@ try {                                        // letzte Zeichnung aus dem Browser
     setEnts(cleanEnts(d.ents, layers));
     curLayer = layerById(d.curLayer) ? d.curLayer : baseLayer().id;
     const o = d.opt || {};
-    for (const k of ['ang', 'osnap', 'grid']) if (typeof o[k] === 'boolean') opt[k] = o[k];
+    for (const k of ['ang', 'osnap', 'grid', 'gap']) if (typeof o[k] === 'boolean') opt[k] = o[k];
     if ([15, 30, 45, 90].includes(o.step)) opt.step = o.step;
     if (o.gridStep > 0) opt.gridStep = o.gridStep;
   }
