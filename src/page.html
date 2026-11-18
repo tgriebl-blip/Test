@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mini-CAD</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  /* Werkstatt-Look: ruhige Bedienleiste, weißes Zeichenblatt mit mm-Gitter; Blau = Werkzeug und Vorschau, Pink = Auswahl, Orange = Fang */
+  :root {
+    color-scheme: light;
+    --ui-bg: #f3f4f6; --ui-fg: #1c2024; --ui-border: #c9ced6; --ui-btn: #ffffff; --ui-active: #1c64d8; --ui-on: #ffffff;
+    --ui-muted: #5f6772; --ui-warn: #c92a2a; --ui-cur: #e2ebfa; --ui-shadow: rgba(20, 30, 50, 0.18);
+    --cv-bg: #ffffff; --cv-grid: #eff1f4; --cv-grid2: #dadee4; --cv-axis: #aab1bb;
+    --cv-line: #14171a; --cv-sel: #d6336c; --cv-snap: #e8590c; --cv-prev: #1c64d8;
+    --m3-bg: #e9ecf1; --m3-part: #c9a77c; --m3-cut: #e8590c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ui-bg: #23272e; --ui-fg: #e6e9ee; --ui-border: #3c424c; --ui-btn: #2e333c; --ui-active: #2f7df6; --ui-on: #ffffff;
+      --ui-muted: #9aa3af; --ui-warn: #e03131; --ui-cur: #263752; --ui-shadow: rgba(0, 0, 0, 0.5);
+      --cv-bg: #15181c; --cv-grid: #1d2126; --cv-grid2: #2a2f37; --cv-axis: #4b535f;
+      --cv-line: #f2f4f7; --cv-sel: #ff6b9d; --cv-snap: #ffa94d; --cv-prev: #6aa9ff;
+      --m3-bg: #1b1f25; --m3-part: #b8946a; --m3-cut: #ffa94d;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ui-bg: #23272e; --ui-fg: #e6e9ee; --ui-border: #3c424c; --ui-btn: #2e333c; --ui-active: #2f7df6; --ui-on: #ffffff;
+    --ui-muted: #9aa3af; --ui-warn: #e03131; --ui-cur: #263752; --ui-shadow: rgba(0, 0, 0, 0.5);
+    --cv-bg: #15181c; --cv-grid: #1d2126; --cv-grid2: #2a2f37; --cv-axis: #4b535f;
+    --cv-line: #f2f4f7; --cv-sel: #ff6b9d; --cv-snap: #ffa94d; --cv-prev: #6aa9ff;
+    --m3-bg: #1b1f25; --m3-part: #b8946a; --m3-cut: #ffa94d;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; flex-direction: column; overflow: hidden;
+         font: 13px/1.35 system-ui, sans-serif; background: var(--ui-bg); color: var(--ui-fg); }
+  #bar, #status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding-block: 6px;
+                  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  #bar { border-bottom: 1px solid var(--ui-border); }
+  #status { border-top: 1px solid var(--ui-border); }
+  .grp { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .grp label { display: flex; align-items: center; gap: 3px; margin-left: 4px; white-space: nowrap; }
+  button, select, input[type=number], input[type=text], #cmd {
+    font: inherit; color: inherit; background: var(--ui-btn);
+    border: 1px solid var(--ui-border); border-radius: 4px; padding: 4px 9px;
+  }
+  button { cursor: pointer; }
+  button:disabled { cursor: default; opacity: 0.45; }
+  button.on { background: var(--ui-active); border-color: var(--ui-active); color: var(--ui-on); }
+  :focus-visible { outline: 2px solid var(--ui-active); outline-offset: 1px; }
+  select { padding: 4px 2px; }
+  input[type=color] { width: 36px; height: 28px; padding: 2px; border: 1px solid var(--ui-border); border-radius: 4px; background: var(--ui-btn); cursor: pointer; }
+  input[type=checkbox], input[type=radio] { accent-color: var(--ui-active); }
+  #oGridStep { width: 62px; padding: 4px 4px 4px 6px; }
+  #layerSel { width: 140px; }
+  #layerLbl { min-width: 6em; justify-content: flex-end; }     /* feste Breiten: die Leiste springt nicht, wenn sich Layer oder Auswahl ändern */
+  .sw, .lprev { flex: none; }
+  #modeSeg button { min-width: 44px; font-weight: 600; }
+  #main { flex: 1; display: flex; min-height: 0; }
+  #side { flex: none; width: 218px; overflow-y: auto; border-right: 1px solid var(--ui-border); padding: 4px 8px 10px max(16px, env(safe-area-inset-left, 0px)); }
+  #side h4 { margin: 10px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ui-muted); }
+  .pg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .pg button { padding: 4px 6px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pg .wide { grid-column: span 2; }
+  #wrap { flex: 1; display: flex; min-width: 0; min-height: 0; }
+  #stage { flex: 1; position: relative; min-width: 0; min-height: 0; }
+  #cv, #gl, #ov { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #cv { cursor: crosshair; }
+  #ov { pointer-events: none; }
+  #prompt { flex: 1 1 320px; white-space: pre-wrap; }
+  #cmd { width: 120px; }
+  #coords { color: var(--ui-muted); white-space: pre; font-variant-numeric: tabular-nums; }
+  .panel { position: absolute; top: 8px; max-height: calc(100% - 16px); overflow: auto; background: var(--ui-bg); z-index: 2;
+           border: 1px solid var(--ui-border); border-radius: 6px; padding: 0 14px 10px; box-shadow: 0 6px 24px var(--ui-shadow); }
+  .phead { display: flex; align-items: center; gap: 8px; padding: 8px 0; }
+  .phead h2 { flex: 1; margin: 0; font-size: 14px; }
+  .x { padding: 2px 9px; font-size: 16px; line-height: 1.2; }
+  .hint { color: var(--ui-muted); }
+  .form { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+  .form label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .form input[type=number] { width: 72px; }
+  .form .wide { flex: 1 1 100%; }
+  .form .wide input { flex: 1; min-width: 0; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  #help { right: max(8px, env(safe-area-inset-right, 0px)); width: min(500px, calc(100% - 16px)); }
+  #help h3 { margin: 10px 0 2px; font-size: 13px; }
+  #help p { margin: 0 0 4px; }
+  #help code { background: var(--ui-btn); border: 1px solid var(--ui-border); border-radius: 3px; padding: 0 3px; }
+  #layers { left: max(8px, env(safe-area-inset-left, 0px)); width: min(880px, calc(100% - 16px)); }
+  #sheet, #blocks, #dlg { left: max(8px, env(safe-area-inset-left, 0px)); width: min(520px, calc(100% - 16px)); }
+  #dlg { z-index: 3; }
+  .lrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px; border-top: 1px solid var(--ui-border); }
+  .lrow.cur { background: var(--ui-cur); }
+  .lrow.off .lname { color: var(--ui-muted); }
+  .lname { flex: 1 1 120px; min-width: 0; }
+  .bname { flex: 1 1 140px; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+  .lon { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+  .lsel { font-variant-numeric: tabular-nums; }
+  .ldel.armed { background: var(--ui-warn); border-color: var(--ui-warn); color: var(--ui-on); }
+  .seg { display: inline-flex; align-items: center; }
+  .seg .segl { margin-right: 6px; color: var(--ui-muted); white-space: nowrap; }
+  .seg button { border-radius: 0; }
+  .seg button + button { margin-left: -1px; }
+  .seg button:first-of-type { border-radius: 4px 0 0 4px; }
+  .seg button:last-of-type { border-radius: 0 4px 4px 0; }
+  #layerHint { margin: 8px 0 0; color: var(--ui-muted); max-width: 75ch; }
+  #note { position: absolute; left: max(8px, env(safe-area-inset-left, 0px)); bottom: 8px; max-width: calc(100% - 16px);
+          display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 8px 6px 12px;
+          background: var(--ui-bg); border: 1px solid var(--ui-border); border-radius: 6px; box-shadow: 0 4px 16px var(--ui-shadow); }
+  /* 3D: Bauteilbaum, Variablen und Eigenschaften rechts */
+  #p3d { flex: none; width: 340px; overflow-y: auto; border-left: 1px solid var(--ui-border); padding: 0 12px 12px max(12px, 0px);
+         padding-right: max(12px, env(safe-area-inset-right, 0px)); }
+  #p3d section + section { border-top: 1px solid var(--ui-border); margin-top: 6px; }
+  .prow { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 4px; }
+  .prow.cur { background: var(--ui-cur); }
+  .prow .pname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .prow .pdot { width: 12px; height: 12px; border-radius: 3px; flex: none; border: 1px solid var(--ui-border); }
+  .prow.used .pname { color: var(--ui-muted); font-style: italic; }
+  .prow .perr { color: var(--ui-warn); }
+  .fgrid { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 8px; align-items: center; margin: 4px 0 8px; }
+  .fgrid input[type=text], .fgrid select { width: 100%; min-width: 0; padding: 3px 6px; }
+  .fgrid .val { color: var(--ui-muted); font-variant-numeric: tabular-nums; text-align: right; min-width: 4.5em; }
+  .fgrid input.bad { border-color: var(--ui-warn); }
+  .feat { border: 1px solid var(--ui-border); border-radius: 6px; padding: 4px 8px; margin: 6px 0; }
+  .feat h3 { display: flex; align-items: center; gap: 6px; margin: 2px 0 4px; font-size: 13px; }
+  .feat h3 span { flex: 1; }
+  .feat .err { color: var(--ui-warn); margin: 0 0 4px; }
+  #bom { left: max(8px, env(safe-area-inset-left, 0px)); width: min(760px, calc(100% - 16px)); }
+  .tbl { overflow-x: auto; }
+  .tbl table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  .tbl th, .tbl td { border-bottom: 1px solid var(--ui-border); padding: 4px 8px; text-align: left; white-space: nowrap; }
+  .tbl td.n { text-align: right; }
+  @media (max-width: 760px) {
+    #main { flex-direction: column; }
+    #side { width: auto; max-height: 30vh; border-right: 0; border-bottom: 1px solid var(--ui-border); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+    .pg { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+    #wrap { flex-direction: column; }
+    #p3d { width: auto; max-height: 38vh; border-left: 0; border-top: 1px solid var(--ui-border); padding-left: max(16px, env(safe-area-inset-left, 0px)); }
+  }
+  #printimg { display: none; }
+  @media print {
+    body { display: block; height: auto; background: #fff; }
+    #bar, #main, #status { display: none !important; }
+    #printimg { display: block; margin: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div id="bar">
+  <span id="modeSeg" class="seg" title="Zwischen 2D-Zeichnung und 3D-Modell umschalten">
+    <button type="button" id="mode2d" class="on" aria-pressed="true">2D</button>
+    <button type="button" id="mode3d" aria-pressed="false">3D</button>
+  </span>
+  <span class="grp">
+    <button type="button" id="undo" title="Rückgängig (Strg+Z)" aria-label="Rückgängig">↶</button>
+    <button type="button" id="redo" title="Wiederholen (Strg+Y)" aria-label="Wiederholen">↷</button>
+    <button type="button" id="del" title="Auswahl löschen (Entf)">Löschen</button>
+    <button type="button" id="fit" title="Ganze Zeichnung zeigen">Alles zeigen</button>
+    <button type="button" id="helpBtn" title="Kurzanleitung" aria-label="Kurzanleitung">?</button>
+  </span>
+  <span class="grp only2d">
+    <label for="layerSel" id="layerLbl">Layer</label>
+    <svg id="layerSw" class="sw" width="36" height="14" aria-hidden="true"></svg>
+    <select id="layerSel" title="Aktueller Layer für neue Elemente. Sind Elemente ausgewählt, kommen sie auf den gewählten Layer."></select>
+    <button type="button" id="layersBtn" title="Layer anlegen und benennen, Farbe, Linienart und Stärke festlegen">Layer verwalten</button>
+  </span>
+  <span class="grp only2d">
+    <label title="Linien rasten auf feste Winkel ein (F8)"><input type="checkbox" id="oAng"> Winkelfang</label>
+    <select id="oStep" title="Winkelschritt"><option value="15">15°</option><option value="30">30°</option><option value="45">45°</option><option value="90">90°</option></select>
+    <label title="End-, Mittel-, Zentrums- und Schnittpunkte fangen (F3)"><input type="checkbox" id="oSnap"> Objektfang</label>
+    <label title="Punkte rasten auf ein Raster ein (F9)"><input type="checkbox" id="oGrid"> Rasterfang</label>
+    <input type="number" id="oGridStep" min="0.001" step="any" title="Rasterweite in mm"> mm
+  </span>
+  <span class="grp">
+    <button type="button" id="new" title="Zeichnung leeren, Layer und Blöcke bleiben erhalten">Neu</button>
+    <button type="button" id="open" title="Gespeicherte Zeichnung (.json) öffnen">Öffnen</button>
+    <button type="button" id="save" title="Zeichnung als Datei speichern (Strg+S)">Speichern</button>
+    <button type="button" id="exportBtn" class="only2d" title="Papier, Maßstab, Maßtexthöhe; PDF, PNG, DXF, Drucken">Blatt &amp; Export</button>
+  </span>
+</div>
+
+<div id="main">
+  <nav id="side" aria-label="Werkzeuge">
+    <div id="pal2d">
+      <h4>Zeichnen</h4>
+      <div class="pg">
+        <button type="button" data-tool="select" title="Auswahl (A)">Auswahl</button>
+        <button type="button" data-tool="line" title="Linie (L)">Linie</button>
+        <button type="button" data-tool="rect" title="Rechteck (R)">Rechteck</button>
+        <button type="button" data-tool="circle" title="Kreis (C)">Kreis</button>
+        <button type="button" data-tool="ellipse" title="Ellipse">Ellipse</button>
+        <button type="button" data-tool="dim" title="Bemaßung (B)">Bemaßung</button>
+      </div>
+      <h4>Ändern</h4>
+      <div class="pg">
+        <button type="button" data-tool="move" title="Ausgewählte Elemente verschieben (M)">Verschieben</button>
+        <button type="button" data-tool="copy" title="Ausgewählte Elemente kopieren (K)">Kopieren</button>
+        <button type="button" data-tool="mirror" title="Auswahl an einer Achse spiegeln">Spiegeln</button>
+        <button type="button" data-tool="stretch" title="Punkte im Fenster verschieben, Linien dehnen sich mit (S)">Strecken</button>
+        <button type="button" data-tool="offset" title="Parallel bzw. konzentrisch in festem Abstand kopieren (V)">Versetzen</button>
+        <button type="button" data-tool="trim" title="Überstand bis zur nächsten Kreuzung entfernen (T)">Stutzen</button>
+        <button type="button" data-tool="extend" title="Linie oder Bogen bis zur nächsten Kante verlängern (X)">Dehnen</button>
+        <button type="button" data-tool="corner" title="Zwei Linien zu einer sauberen Ecke kürzen/verlängern (E)">Ecke</button>
+        <button type="button" data-tool="chamfer" title="Ecke abschrägen, Fase tippen: 10 oder 10;20">Fase</button>
+        <button type="button" data-tool="fillet" title="Ecke abrunden, Radius tippen">Abrunden</button>
+      </div>
+      <h4>Blöcke</h4>
+      <div class="pg">
+        <button type="button" id="blockMake" title="Ausgewählte Elemente zu einem Block zusammenfassen">Block bilden</button>
+        <button type="button" id="blocksBtn" title="Blöcke ansehen und einfügen">Einfügen…</button>
+        <button type="button" id="explode" title="Ausgewählte Blöcke in einzelne Elemente auflösen">Auflösen</button>
+      </div>
+      <h4>Nach 3D</h4>
+      <div class="pg">
+        <button type="button" id="toExtrude" title="Geschlossene Kontur auswählen und zu einem Körper aufziehen">Extrudieren</button>
+        <button type="button" id="toRevolve" title="Kontur und eine Achslinie auswählen und zu einem Drehkörper drehen">Drehkörper</button>
+      </div>
+    </div>
+    <div id="pal3d" hidden>
+      <h4>Ansicht</h4>
+      <div class="pg">
+        <button type="button" id="v3front">Vorne</button>
+        <button type="button" id="v3top">Oben</button>
+        <button type="button" id="v3right">Rechts</button>
+        <button type="button" id="v3iso">Iso</button>
+        <button type="button" id="v3persp" class="wide" title="Zwischen Perspektive und Parallelprojektion umschalten">Perspektive</button>
+      </div>
+      <h4>Bauteile</h4>
+      <div class="pg">
+        <button type="button" id="m3box" class="wide" title="Neue Platte bzw. neuen Quader anlegen">+ Platte / Quader</button>
+        <button type="button" id="m3copy" title="Verknüpfte Kopie: ändert sich mit dem Original">Kopie</button>
+        <button type="button" id="m3move" title="Bauteil von Fangpunkt zu Fangpunkt verschieben">Verschieben</button>
+        <button type="button" id="m3del" class="wide" title="Ausgewähltes Bauteil löschen">Bauteil löschen</button>
+      </div>
+      <h4>Bearbeiten</h4>
+      <div class="pg">
+        <button type="button" id="m3hole" title="Bohrung: Fläche des Bauteils anklicken">Bohrung</button>
+        <button type="button" id="m3cut" title="Nut oder Ausschnitt: Fläche des Bauteils anklicken">Nut / Falz</button>
+        <button type="button" id="m3sub" title="Anderes Bauteil vom ausgewählten abziehen">Abziehen</button>
+        <button type="button" id="m3add" title="Anderes Bauteil mit dem ausgewählten vereinigen">Vereinigen</button>
+        <button type="button" id="m3int" class="wide" title="Nur den gemeinsamen Teil zweier Bauteile behalten">Schnittmenge</button>
+      </div>
+      <h4>Prüfen &amp; Ausgabe</h4>
+      <div class="pg">
+        <button type="button" id="m3section" title="Modell an einer Ebene aufschneiden">Schnitt</button>
+        <button type="button" id="m3collide" title="Überschneidungen zwischen Bauteilen finden">Kollision</button>
+        <button type="button" id="m3bom" title="Stückliste mit Maßen und Material">Stückliste</button>
+        <button type="button" id="m3stl" title="Modell als STL für 3D-Druck und Visualisierung">STL</button>
+        <button type="button" id="m3views" class="wide" title="Vorder-, Drauf- und Seitenansicht in die 2D-Zeichnung übernehmen">2D-Ansichten erzeugen</button>
+      </div>
+    </div>
+  </nav>
+
+  <div id="wrap">
+    <div id="stage">
+      <canvas id="cv"></canvas>
+      <canvas id="gl" hidden></canvas>
+      <canvas id="ov" hidden></canvas>
+
+      <div id="layers" class="panel" hidden>
+        <div class="phead">
+          <h2>Layer</h2>
+          <button type="button" id="addLayer">+ Neuer Layer</button>
+          <button type="button" id="closeLayers" class="x" title="Schließen (Esc)" aria-label="Schließen">×</button>
+        </div>
+        <div id="layerRows"></div>
+        <p id="layerHint"></p>
+      </div>
+
+      <div id="sheet" class="panel" hidden>
+        <div class="phead">
+          <h2>Blatt &amp; Export</h2>
+          <button type="button" id="closeSheet" class="x" title="Schließen (Esc)" aria-label="Schließen">×</button>
+        </div>
+        <div class="form">
+          <label>Papier <select id="shPaper"><option>A4</option><option>A3</option></select></label>
+          <label>Lage <select id="shOrient"><option value="quer">quer</option><option value="hoch">hoch</option></select></label>
+          <label>Maßstab <select id="shScale"><option value="0">automatisch</option><option value="1">1:1</option><option value="2">1:2</option><option value="5">1:5</option><option value="10">1:10</option><option value="20">1:20</option><option value="25">1:25</option><option value="50">1:50</option><option value="100">1:100</option><option value="200">1:200</option></select></label>
+          <label title="Höhe der Maßzahlen auf dem Papier (DIN: 2,5 / 3,5 / 5 mm)">Maßtext <input type="number" id="shDimH" min="1" max="20" step="0.5"> mm hoch</label>
+          <label class="wide">Titel <input type="text" id="shTitle" maxlength="60" placeholder="z. B. Korpus Küche"></label>
+        </div>
+        <p id="shInfo" class="hint"></p>
+        <div class="row">
+          <button type="button" id="pdf" class="on">PDF speichern</button>
+          <button type="button" id="png">PNG speichern</button>
+          <button type="button" id="dxf" title="Für AutoCAD &amp; Co.">DXF speichern</button>
+          <button type="button" id="print">Drucken</button>
+        </div>
+      </div>
+
+      <div id="blocks" class="panel" hidden>
+        <div class="phead">
+          <h2>Blöcke</h2>
+          <button type="button" id="closeBlocks" class="x" title="Schließen (Esc)" aria-label="Schließen">×</button>
+        </div>
+        <div class="form">
+          <label>Drehung <input type="number" id="bkRot" step="90" value="0"> °</label>
+          <label>Maßstab <input type="number" id="bkScale" step="0.1" min="0.01" value="1"></label>
+        </div>
+        <div id="blockRows"></div>
+        <p class="hint">Block bilden: Elemente auswählen, „Block bilden“ klicken, Namen eingeben, Basispunkt anklicken.
+          Ein vorhandener Name ersetzt den Block überall. „Auflösen“ macht einen eingefügten Block wieder zu einzelnen Elementen.</p>
+      </div>
+
+      <div id="bom" class="panel" hidden>
+        <div class="phead">
+          <h2>Stückliste</h2>
+          <button type="button" id="bomCsv">CSV speichern</button>
+          <button type="button" id="closeBom" class="x" title="Schließen (Esc)" aria-label="Schließen">×</button>
+        </div>
+        <div class="tbl" id="bomTable"></div>
+        <p class="hint">Maße aus der Außenkontur jedes Bauteils, sortiert: Länge ≥ Breite ≥ Dicke. Gleiche Teile sind zusammengefasst.</p>
+      </div>
+
+      <div id="dlg" class="panel" hidden role="dialog" aria-modal="false" aria-labelledby="dlgTitle">
+        <div class="phead"><h2 id="dlgTitle"></h2></div>
+        <p id="dlgText" class="hint"></p>
+        <div class="form" id="dlgForm"></div>
+        <div class="row">
+          <button type="button" id="dlgOk" class="on">OK</button>
+          <button type="button" id="dlgCancel">Abbrechen</button>
+        </div>
+      </div>
+
+      <div id="help" class="panel" hidden>
+        <div class="phead">
+          <h2>Kurzanleitung</h2>
+          <button type="button" id="closeHelp" class="x" title="Schließen (Esc)" aria-label="Schließen">×</button>
+        </div>
+        <h3>Linie (L)</h3>
+        <p>Startpunkt anklicken, Maus grob in die gewünschte Richtung bewegen, <b>Länge in mm tippen</b> und Enter drücken.
+           Die Linie rastet auf 0°, 45°, 90° … ein. Danach einfach die nächste Länge tippen.
+           Esc, Enter oder Rechtsklick beendet den Linienzug, <code>C</code> schließt ihn.</p>
+        <p>Weitere Eingaben: <code>100&lt;30</code> Länge und Winkel · <code>@50;20</code> relativ (dx;dy) · <code>120;80</code> absolut (x;y).
+           Dezimalkomma oder -punkt geht beides.</p>
+        <h3>Kreis (C) · Ellipse</h3>
+        <p>Kreis: Mittelpunkt anklicken, dann Radius tippen (unten auf Durchmesser umschaltbar) oder einen Punkt anklicken.
+           Ellipse: Mittelpunkt anklicken, dann <code>Breite;Höhe</code> tippen oder eine Ecke anklicken.</p>
+        <h3>Layer</h3>
+        <p>Ein Layer ist eine benannte Linienart mit Farbe, Strichart (durchgehend, gestrichelt, gepunktet, Strich-Punkt …) und Stärke,
+           zum Beispiel „Wand“ dick und schwarz, „Korpus“ blau. Unter <b>Layer verwalten</b> anlegen und benennen.
+           Neue Elemente landen auf dem Layer, der oben gewählt ist. Um vorhandene umzustellen, sie auswählen und oben einen anderen Layer wählen.
+           „sichtbar“ blendet einen Layer aus. Bemaßungen kommen automatisch auf den Layer „Bemaßung“.</p>
+        <h3>Rechteck (R)</h3>
+        <p>Erste Ecke anklicken, dann <code>Breite;Höhe</code> tippen + Enter – oder die zweite Ecke anklicken.</p>
+        <h3>Bemaßung (B)</h3>
+        <p>Zwei Punkte (oder direkt eine Linie) anklicken, dann die Lage der Maßlinie anklicken oder ihren Abstand tippen.
+           Bei schrägen Strecken: Maus ober-/unterhalb = horizontales Maß, seitlich = vertikales Maß, sonst ausgerichtet.
+           Die Höhe der Maßzahlen stellst du unter <b>Blatt &amp; Export</b> ein.</p>
+        <h3>Auswahl (A) und Griffe</h3>
+        <p>Element anklicken (Umschalt = mehrere) oder Fenster aufziehen (nach links gezogen = auch Angeschnittenes). Entf löscht, Strg+A wählt alles.</p>
+        <p>Ausgewählte Elemente zeigen blaue Griffe: an Linienenden, bei Maßen an beiden Messpunkten und in der Mitte der Maßlinie,
+           bei Kreisen am Zentrum und an den Quadranten (Radius), bei Ellipsen an den Achsen.
+           Griff anklicken (oder ziehen), dann die neue Lage anklicken oder einen Wert tippen + Enter.
+           Liegen Enden mehrerer ausgewählter Elemente aufeinander, wandern sie gemeinsam.</p>
+        <h3>Verschieben (M) · Kopieren (K) · Spiegeln</h3>
+        <p>Elemente auswählen, Befehl wählen, Ausgangspunkt anklicken, dann Zielpunkt anklicken – oder Richtung zeigen, <b>Maß tippen</b> und Enter.
+           Das Maß ist die Verschiebung: Die ganze Auswahl wandert um genau diesen Weg (wie in AutoCAD).</p>
+        <p>Beim Kopieren schaltet unten <b>Abstand dazwischen</b> um: Dann ist das getippte Maß die Luft zwischen Original und Kopie,
+           z. B. 150 mm zwischen zwei 19 mm starken Brettern. Jede weitere Kopie setzt an der letzten an, bis Esc gedrückt wird.</p>
+        <p>Spiegeln: zwei Punkte der Spiegelachse anklicken. Unten wählst du, ob das Original bleibt.</p>
+        <h3>Strecken (S) · Dehnen (X)</h3>
+        <p>Strecken: Fenster über die Punkte ziehen, die wandern sollen, dann Ausgangspunkt und Ziel bzw. Weg. Linien, die ins Fenster ragen, werden länger oder kürzer, Maße passen sich an.
+           Dehnen: Linie oder Bogen nahe dem Ende anklicken – sie wachsen bis zur nächsten Kante.</p>
+        <h3>Versetzen (V) · Stutzen (T) · Ecke (E) · Fase · Abrunden</h3>
+        <p>Versetzen: Linie, Kreis oder Bogen anklicken, Seite zeigen, Abstand tippen + Enter.
+           Stutzen: den Überstand anklicken – er wird bis zur nächsten Kreuzung entfernt.
+           Ecke, Fase und Abrunden: zwei Linien anklicken, jeweils auf dem Teil, der bleiben soll. Fase tippen (<code>10</code> oder <code>10;20</code>) bzw. Radius tippen + Enter.</p>
+        <h3>Blöcke</h3>
+        <p>Elemente auswählen, „Block bilden“, Namen eingeben, Basispunkt anklicken. „Einfügen…“ zeigt alle Blöcke mit Drehung und Maßstab.
+           Ändern: Block auflösen, bearbeiten und mit demselben Namen neu bilden – alle Einfügungen ändern sich mit.</p>
+        <h3>Blatt &amp; Export</h3>
+        <p>Papier (A4/A3), Lage, Maßstab (automatisch oder fest) und Maßtexthöhe in mm. PDF wird als echte Vektorzeichnung gespeichert.</p>
+        <h3>3D</h3>
+        <p>Oben auf <b>3D</b> schalten. Bauteile anlegen (Platte/Quader) oder in 2D eine geschlossene Kontur auswählen und „Extrudieren“ bzw. „Drehkörper“ wählen.
+           Rechts stehen Variablen (z. B. <code>Staerke = 19</code>) und alle Bauteile mit ihren Arbeitsschritten; jedes Maß darf eine Formel sein.
+           Ansicht: linke Maustaste dreht, rechte oder mittlere verschiebt, Mausrad zoomt.</p>
+        <h3>Fang</h3>
+        <p>□ Endpunkt · △ Mittelpunkt · ○ Zentrum · ◇ Quadrant · ✕ Schnittpunkt · gepunktete Linie = fluchtet mit einem Punkt.
+           F3 Objektfang, F8 Winkelfang, F9 Rasterfang. Ausgeblendete Layer werden nicht gefangen.</p>
+        <h3>Ansicht</h3>
+        <p>Mausrad = Zoom · mittlere oder rechte Maustaste ziehen (oder Leertaste + ziehen) = verschieben · Strg+Z / Strg+Y = rückgängig / wiederholen.</p>
+      </div>
+
+      <div id="note" hidden>
+        <span>Beispiel: Nische mit Korpus. Wand, Korpus und Mittellinie liegen auf eigenen Layern.</span>
+        <button type="button" id="noteClear">Leeres Blatt</button>
+        <button type="button" id="noteClose" class="x" title="Hinweis schließen" aria-label="Hinweis schließen">×</button>
+      </div>
+    </div>
+
+    <aside id="p3d" hidden aria-label="3D-Modell">
+      <section>
+        <div class="phead"><h2>Variablen</h2><button type="button" id="addParam" title="Neue Variable, z. B. Staerke = 19">+ Variable</button></div>
+        <div id="paramRows"></div>
+      </section>
+      <section>
+        <div class="phead"><h2>Bauteile</h2></div>
+        <div id="partRows"></div>
+      </section>
+      <section>
+        <div class="phead"><h2 id="propTitle">Eigenschaften</h2></div>
+        <div id="propRows"></div>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<div id="status">
+  <span id="prompt"></span>
+  <span id="mvMode" class="seg" hidden>
+    <span class="segl">Maß =</span>
+    <button type="button" id="mvShift" title="Das getippte Maß ist der Weg, um den die Kopie wandert (wie in AutoCAD).">Verschiebung</button>
+    <button type="button" id="mvGap" title="Das getippte Maß ist die Luft zwischen Original und Kopie, z. B. 150 mm zwischen zwei Brettern.">Abstand dazwischen</button>
+  </span>
+  <span id="circMode" class="seg" hidden>
+    <span class="segl">Maß =</span>
+    <button type="button" id="cmR">Radius</button>
+    <button type="button" id="cmD">Durchmesser</button>
+  </span>
+  <span id="mirMode" class="seg" hidden>
+    <span class="segl">Original</span>
+    <button type="button" id="mmKeep">behalten</button>
+    <button type="button" id="mmDel">löschen</button>
+  </span>
+  <span class="grp">
+    <input id="cmd" autocomplete="off" spellcheck="false" placeholder="Länge / Wert" title="Wert eingeben und Enter drücken">
+    <button type="button" id="ok" title="Eingabe bestätigen bzw. Befehl beenden (Enter)" aria-label="Eingabe bestätigen">↵</button>
+  </span>
+  <span id="coords"></span>
+</div>
+
+<img id="printimg" alt="">
+<style id="pageStyle"></style>
+<input type="file" id="file" accept=".json,application/json" hidden>
+
+<script>
+/*@@SCRIPT@@*/
+</script>
+</body>
+</html>
