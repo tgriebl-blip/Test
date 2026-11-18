@@ -17,6 +17,7 @@ try {                                        // letzte Zeichnung aus dem Browser
     blocks = cleanBlocks(d.blocks, layers);
     setEnts(cleanEnts(d.ents, layers));
     if (d.model) model = cleanModel(d.model);
+    bumpIds();
     applySheet(d.sheet);
     curLayer = layerById(d.curLayer) ? d.curLayer : baseLayer().id;
     const o = d.opt || {};

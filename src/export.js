@@ -302,6 +302,7 @@ function openFile(file) {
     if (!list.length && !(mdl && mdl.parts.length)) return flash('Die Datei enthält keine lesbare Zeichnung.');
     sel.clear();
     change(() => { layers = ls; blocks = bl; if (mdl) model = mdl; setEnts(list); });
+    bumpIds();
     if (obj) applySheet(obj.sheet);
     chain = []; pts = [];
     zoomFit();

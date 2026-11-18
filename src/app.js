@@ -12,7 +12,7 @@ function fixState() {                        // Auswahl und Bezüge an geändert
 }
 function setEnts(list) {
   gver++;
-  ents = list; nextId = ents.reduce((m, e) => Math.max(m, e.id), 0) + 1; first = null;
+  ents = list; nextId = Math.max(nextId, ents.reduce((m, e) => Math.max(m, e.id), 0) + 1); first = null;   // Nummern nie wiederverwenden
   fixState();
 }
 function restore(s) { const o = JSON.parse(s); layers = o.layers; blocks = o.blocks || {}; if (o.model) model = o.model; setEnts(o.ents); modelChanged(); }
@@ -83,11 +83,14 @@ function cleanLayers(list) {                 // geladene Layer prüfen; null = k
   return out;
 }
 function cleanEnts(list, ls, names = new Set(Object.keys(blocks))) {   // geladene Elemente prüfen; unbekannte Layer -> Standard bzw. Bemaßung
-  const ok = v => typeof v === 'number' && isFinite(v), pos = v => ok(v) && v > 0, out = [];
-  const base = (ls.find(l => !l.dims) || ls[0]).id, dl = (ls.find(l => l.dims) || ls[0]).id;
-  for (const e of Array.isArray(list) ? list : []) {
+  const ok = v => typeof v === 'number' && isFinite(v), pos = v => ok(v) && v > 0, out = [], arr = Array.isArray(list) ? list : [];
+  const base = (ls.find(l => !l.dims) || ls[0]).id, dl = (ls.find(l => l.dims) || ls[0]).id, used = new Set();
+  let fresh = arr.reduce((m, e) => Math.max(m, e && Number.isInteger(e.id) ? e.id : 0), 0);
+  for (const e of arr) {
     if (!e || typeof e !== 'object') continue;
-    const l = ls.some(o => o.id === e.l) ? e.l : e.t === 'dim' ? dl : base, id = out.length + 1;
+    const l = ls.some(o => o.id === e.l) ? e.l : e.t === 'dim' ? dl : base;
+    const id = Number.isInteger(e.id) && e.id > 0 && !used.has(e.id) ? e.id : ++fresh;   // Nummern bleiben (3D-Körper verweisen darauf)
+    used.add(id);
     if (e.t === 'line' && [e.x1, e.y1, e.x2, e.y2].every(ok)) out.push({ id, t: 'line', l, x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2 });
     else if (e.t === 'dim' && [e.x1, e.y1, e.x2, e.y2, e.px, e.py].every(ok))
       out.push({ id, t: 'dim', l, x1: e.x1, y1: e.y1, x2: e.x2, y2: e.y2, px: e.px, py: e.py, mode: e.mode === 'h' || e.mode === 'v' ? e.mode : 'a' });
